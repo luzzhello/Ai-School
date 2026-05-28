@@ -53,6 +53,7 @@ import org.ruoyi.common.sse.core.SseEmitterManager;
 import org.ruoyi.common.sse.utils.SseMessageUtils;
 import org.ruoyi.domain.bo.vector.QueryVectorBo;
 import org.ruoyi.domain.vo.knowledge.KnowledgeInfoVo;
+import org.ruoyi.enums.ChatModeType;
 import org.ruoyi.factory.ChatServiceFactory;
 import org.ruoyi.mcp.service.core.ToolProviderFactory;
 import org.ruoyi.mcp.tools.CreateFileTool;
@@ -112,6 +113,8 @@ public class ChatServiceFacade implements IChatService {
     private final IWorkFlowStarterService workFlowStarterService;
 
     private final ToolProviderFactory toolProviderFactory;
+
+    private final org.ruoyi.service.chat.impl.provider.DifyWorkflowService difyWorkflowService;
 
     /**
      * 内存实例缓存，避免同一会话重复创建
@@ -179,6 +182,14 @@ public class ChatServiceFacade implements IChatService {
      * @return 如果需要提前返回则返回SseEmitter，否则返回null
      */
     private SseEmitter handleSpecialChatModes(ChatRequest chatRequest) {
+        // 处理 Dify 工作流对话
+        if (chatRequest.getEnableWorkFlow()
+                && chatRequest.getChatModelVo() != null
+                && ChatModeType.DIFY.getCode().equals(chatRequest.getChatModelVo().getProviderCode())) {
+            log.info("处理Dify工作流对话,会话: {}", chatRequest.getSessionId());
+            return difyWorkflowService.streaming(chatRequest.getChatModelVo(), chatRequest);
+        }
+
         // 处理工作流对话
         if (chatRequest.getEnableWorkFlow()) {
             log.info("处理工作流对话,会话: {}", chatRequest.getSessionId());
@@ -493,6 +504,42 @@ public class ChatServiceFacade implements IChatService {
             }
         }
 
+        // Dify 自带 RAG 知识库检索，跳过本地向量库查询
+        boolean isDifyProvider = chatRequest.getChatModelVo() != null
+                && ChatModeType.DIFY.getCode().equals(chatRequest.getChatModelVo().getProviderCode());
+
+        // 从向量库查询相关历史消息（知识库内容作为上下文）
+        if (chatRequest.getKnowledgeId() != null && !isDifyProvider) {
+            // 查询知识库信息
+            KnowledgeInfoVo knowledgeInfoVo = knowledgeInfoService.queryById(Long.valueOf(chatRequest.getKnowledgeId()));
+            if (knowledgeInfoVo == null) {
+                log.warn("知识库信息不存在，kid: {}", chatRequest.getKnowledgeId());
+                // 继续添加当前用户消息
+                messages.add(UserMessage.userMessage(chatRequest.getContent()));
+                return messages;
+            }
+
+            // 查询向量模型配置信息
+            ChatModelVo chatModel = chatModelService.selectModelByName(knowledgeInfoVo.getEmbeddingModel());
+            if (chatModel == null) {
+                log.warn("向量模型配置不存在，模型名称: {}", knowledgeInfoVo.getEmbeddingModel());
+                messages.add(UserMessage.userMessage(chatRequest.getContent()));
+                return messages;
+            }
+
+            // 构建向量查询参数
+            QueryVectorBo queryVectorBo = buildQueryVectorBo(chatRequest, knowledgeInfoVo, chatModel);
+
+            // 获取向量查询结果（知识库内容作为系统上下文，放在历史消息之后）
+            List<String> nearestList = vectorStoreService.getQueryVector(queryVectorBo);
+            for (String prompt : nearestList) {
+                // 知识库内容作为系统上下文添加
+                messages.add(new AiMessage(prompt));
+            }
+        }
+
+        // 构建当前用户消息（放在最后）
+        UserMessage userMessage = UserMessage.userMessage(chatRequest.getContent());
         // 4. 添加经过增强的用户消息（放在最后）
         messages.add(userMessage);
 
