@@ -63,6 +63,11 @@ public class KnowledgeInfoBo extends BaseEntity {
     private Long retrieveLimit;
 
     /**
+     * 相似度阈值
+     */
+    private Double similarityThreshold;
+
+    /**
      * 文本块大小
      */
     private Long textBlockSize;
@@ -78,9 +83,39 @@ public class KnowledgeInfoBo extends BaseEntity {
     private String embeddingModel;
 
     /**
+     * 是否启用重排序（0 否 1是）
+     */
+    private Integer enableRerank;
+
+    /**
+     * 重排序模型名称
+     */
+    private String rerankModel;
+
+    /**
+     * 重排序后返回的文档数量
+     */
+    private Integer rerankTopN;
+
+    /**
+     * 重排序相关性分数阈值
+     */
+    private Double rerankScoreThreshold;
+
+
+    /**
+     * 是否启用混合检索（0 否 1是）
+     */
+    private Integer enableHybrid;
+
+    /**
+     * 混合检索权重 (0.0-1.0)
+     */
+    private Double hybridAlpha;
+
+    /**
      * 备注
      */
     private String remark;
-
 
 }

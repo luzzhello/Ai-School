@@ -20,10 +20,16 @@ import dev.langchain4j.model.chat.response.StreamingChatResponseHandler;
 import dev.langchain4j.model.openai.OpenAiChatModel;
 import dev.langchain4j.service.tool.ToolProvider;
 import dev.langchain4j.skills.shell.ShellSkills;
+import dev.langchain4j.rag.AugmentationRequest;
+import dev.langchain4j.rag.AugmentationResult;
+import dev.langchain4j.rag.DefaultRetrievalAugmentor;
+import dev.langchain4j.rag.RetrievalAugmentor;
+import dev.langchain4j.rag.query.Metadata;
 import lombok.RequiredArgsConstructor;
 import lombok.SneakyThrows;
 import lombok.extern.slf4j.Slf4j;
 import org.ruoyi.agent.ChartGenerationAgent;
+import org.ruoyi.agent.CodingAgent;
 import org.ruoyi.agent.EchartsAgent;
 import org.ruoyi.agent.SkillsAgent;
 import org.ruoyi.agent.SqlAgent;
@@ -50,11 +56,19 @@ import org.ruoyi.domain.vo.knowledge.KnowledgeInfoVo;
 import org.ruoyi.enums.ChatModeType;
 import org.ruoyi.factory.ChatServiceFactory;
 import org.ruoyi.mcp.service.core.ToolProviderFactory;
+import org.ruoyi.mcp.tools.CreateFileTool;
+import org.ruoyi.mcp.tools.EditFileTool;
+import org.ruoyi.mcp.tools.ListDirectoryTool;
+import org.ruoyi.mcp.tools.ReadFileTool;
+import org.ruoyi.mcp.tools.RunCommandTool;
+import org.ruoyi.mcp.tools.TaskPlannerTool;
 import org.ruoyi.observability.*;
 import org.ruoyi.service.chat.AbstractChatService;
 import org.ruoyi.service.chat.IChatMessageService;
 import org.ruoyi.service.chat.impl.memory.PersistentChatMemoryStore;
 import org.ruoyi.service.knowledge.IKnowledgeInfoService;
+import org.ruoyi.service.retrieval.KnowledgeRetrievalService;
+import org.ruoyi.service.knowledge.retriever.CustomVectorRetriever;
 import org.ruoyi.service.vector.VectorStoreService;
 import org.springframework.stereotype.Service;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
@@ -89,6 +103,8 @@ public class ChatServiceFacade implements IChatService {
     private final IKnowledgeInfoService knowledgeInfoService;
 
     private final VectorStoreService vectorStoreService;
+
+    private final KnowledgeRetrievalService knowledgeRetrievalService;
 
     private final SseEmitterManager sseEmitterManager;
 
@@ -318,11 +334,25 @@ public class ChatServiceFacade implements IChatService {
             .listener(new MyAgentListener())
             .build();
 
+        // 构建子 Agent 6: CodingAgent - 负责通用开发任务落地
+        CodingAgent codingAgent = AgenticServices.agentBuilder(CodingAgent.class)
+            .chatModel(plannerModel)
+            .tools(
+                new TaskPlannerTool(),
+                new ListDirectoryTool(),
+                new ReadFileTool(),
+                new CreateFileTool(),
+                new EditFileTool(),
+                new RunCommandTool()
+            )
+            .listener(new MyAgentListener())
+            .build();
+
         // 构建监督者 Agent - 管理多个子 Agent
         SupervisorAgent supervisor = AgenticServices.supervisorBuilder()
             .chatModel(plannerModel)
             //.listener(new SupervisorStreamListener(null))
-            .subAgents(skillsAgent,searchAgent, sqlAgent, chartGenerationAgent, echartsAgent)
+            .subAgents(skillsAgent,searchAgent, sqlAgent, chartGenerationAgent, echartsAgent, codingAgent)
             // 加入历史上下文 - 使用 ChatMemoryProvider 提供持久化的聊天内存
             //.chatMemoryProvider(memoryId -> createChatMemory(chatRequest.getSessionId()))
             .responseStrategy(SupervisorResponseStrategy.LAST)
@@ -420,16 +450,49 @@ public class ChatServiceFacade implements IChatService {
 
     /**
      * 构建上下文消息列表
-
      * 消息顺序：历史消息 → 当前用户消息（确保 AI 正确理解对话上下文）
      *
      * @param chatRequest 聊天请求
      * @return 上下文消息列表
      */
     private List<ChatMessage> buildContextMessages(ChatRequest chatRequest) {
-        List<ChatMessage> messages  = new ArrayList<>();
+        List<ChatMessage> messages = new ArrayList<>();
 
-        // 从数据库查询历史对话消息（放在前面）
+        // 1. 初始化当前用户消息
+        UserMessage userMessage = UserMessage.userMessage(chatRequest.getContent());
+
+        // 2. 知识库检索增强 (RAG)
+        if (chatRequest.getKnowledgeId() != null) {
+            KnowledgeInfoVo knowledgeInfoVo = knowledgeInfoService.queryById(Long.valueOf(chatRequest.getKnowledgeId()));
+            if (knowledgeInfoVo != null) {
+                ChatModelVo chatModel = chatModelService.selectModelByName(knowledgeInfoVo.getEmbeddingModel());
+                if (chatModel != null) {
+                    log.info("执行高级 RAG 流程: kid={}", chatRequest.getKnowledgeId());
+
+                    // 构建自定义检索器
+                    CustomVectorRetriever retriever = new CustomVectorRetriever(
+                            knowledgeRetrievalService, knowledgeInfoVo, chatModel);
+
+                    // 构建增强流水线
+                    RetrievalAugmentor augmentor = DefaultRetrievalAugmentor.builder()
+                            .contentRetriever(retriever)
+                            .build();
+
+                    // 执行增强：编织上下文到 UserMessage
+                    Metadata metadata = Metadata.from(userMessage, chatRequest.getSessionId(), new ArrayList<>());
+                    AugmentationRequest augmentationRequest = new AugmentationRequest(userMessage, metadata);
+                    AugmentationResult result = augmentor.augment(augmentationRequest);
+
+                    ChatMessage augmented = result.chatMessage();
+                    if (augmented instanceof UserMessage) {
+                        userMessage = (UserMessage) augmented;
+                        log.debug("RAG 增强完成，UserMessage 已注入背景知识");
+                    }
+                }
+            }
+        }
+
+        // 3. 从数据库查询历史对话消息（放在前面）
         if (chatRequest.getSessionId() != null) {
             MessageWindowChatMemory memory = createChatMemory(chatRequest.getSessionId());
             if (memory != null) {
@@ -477,6 +540,7 @@ public class ChatServiceFacade implements IChatService {
 
         // 构建当前用户消息（放在最后）
         UserMessage userMessage = UserMessage.userMessage(chatRequest.getContent());
+        // 4. 添加经过增强的用户消息（放在最后）
         messages.add(userMessage);
 
         return messages;
@@ -495,6 +559,13 @@ public class ChatServiceFacade implements IChatService {
         queryVectorBo.setVectorModelName(knowledgeInfoVo.getVectorModel());
         queryVectorBo.setEmbeddingModelName(knowledgeInfoVo.getEmbeddingModel());
         queryVectorBo.setMaxResults(knowledgeInfoVo.getRetrieveLimit());
+
+        // 设置重排序参数
+        queryVectorBo.setEnableRerank(knowledgeInfoVo.getEnableRerank() != null && knowledgeInfoVo.getEnableRerank() == 1);
+        queryVectorBo.setRerankModelName(knowledgeInfoVo.getRerankModel());
+        queryVectorBo.setRerankTopN(knowledgeInfoVo.getRerankTopN());
+        queryVectorBo.setRerankScoreThreshold(knowledgeInfoVo.getRerankScoreThreshold());
+
         return queryVectorBo;
     }
 
@@ -615,4 +686,3 @@ public class ChatServiceFacade implements IChatService {
         };
     }
 }
-
