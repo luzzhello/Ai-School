@@ -80,6 +80,11 @@ public class ChatRequest {
     private Boolean enableThinking = false;
 
     /**
+     * 系统提示词（由业务类型解析后注入，无需前端传入）
+     */
+    private String systemPrompt;
+
+    /**
      * 对话模型详情
      */
     private ChatModelVo chatModelVo;

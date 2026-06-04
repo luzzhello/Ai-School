@@ -6,6 +6,7 @@ import dev.langchain4j.agentic.supervisor.SupervisorAgent;
 import dev.langchain4j.agentic.supervisor.SupervisorResponseStrategy;
 import dev.langchain4j.data.message.AiMessage;
 import dev.langchain4j.data.message.ChatMessage;
+import dev.langchain4j.data.message.SystemMessage;
 import dev.langchain4j.data.message.UserMessage;
 import dev.langchain4j.mcp.McpToolProvider;
 import dev.langchain4j.mcp.client.DefaultMcpClient;
@@ -38,6 +39,7 @@ import org.ruoyi.agent.tool.ExecuteSqlQueryTool;
 import org.ruoyi.agent.tool.QueryAllTablesTool;
 import org.ruoyi.agent.tool.QueryTableSchemaTool;
 import org.ruoyi.common.chat.base.ThreadContext;
+import org.ruoyi.common.chat.domain.dto.request.BizChatRequest;
 import org.ruoyi.common.chat.domain.dto.request.ChatRequest;
 import org.ruoyi.common.chat.domain.dto.request.ReSumeRunner;
 import org.ruoyi.common.chat.domain.dto.request.WorkFlowRunner;
@@ -46,6 +48,7 @@ import org.ruoyi.common.chat.enums.RoleType;
 import org.ruoyi.common.chat.service.chat.IChatModelService;
 import org.ruoyi.common.chat.service.chat.IChatService;
 import org.ruoyi.common.chat.service.workFlow.IWorkFlowStarterService;
+import org.ruoyi.common.core.exception.ServiceException;
 import org.ruoyi.common.core.utils.ObjectUtils;
 import org.ruoyi.common.core.utils.StringUtils;
 import org.ruoyi.common.satoken.utils.LoginHelper;
@@ -65,6 +68,7 @@ import org.ruoyi.mcp.tools.TaskPlannerTool;
 import org.ruoyi.observability.*;
 import org.ruoyi.service.chat.AbstractChatService;
 import org.ruoyi.service.chat.IChatMessageService;
+import org.ruoyi.service.chat.IChatPromptService;
 import org.ruoyi.service.chat.impl.memory.PersistentChatMemoryStore;
 import org.ruoyi.service.knowledge.IKnowledgeInfoService;
 import org.ruoyi.service.retrieval.KnowledgeRetrievalService;
@@ -109,6 +113,8 @@ public class ChatServiceFacade implements IChatService {
     private final SseEmitterManager sseEmitterManager;
 
     private final IChatMessageService chatMessageService;
+
+    private final IChatPromptService chatPromptService;
 
     private final IWorkFlowStarterService workFlowStarterService;
 
@@ -173,6 +179,25 @@ public class ChatServiceFacade implements IChatService {
         StreamingChatModel streamingChatModel = chatService.buildStreamingChatModel(chatModelVo, chatRequest);
         streamingChatModel.chat(contextMessages, handler);
         return emitter;
+    }
+
+    /**
+     * 业务场景聊天入口 - 根据业务类型注入系统提示词
+     *
+     * @param bizChatRequest 业务场景聊天请求
+     * @return SseEmitter
+     */
+    public SseEmitter sseBizChat(BizChatRequest bizChatRequest) {
+        var prompt = chatPromptService.queryByCode(bizChatRequest.getBizType());
+        if (prompt == null) {
+            throw new ServiceException("未找到业务类型对应的提示词: " + bizChatRequest.getBizType());
+        }
+        if (StringUtils.isBlank(prompt.getPromptContent())) {
+            throw new ServiceException("业务类型对应的提示词内容为空: " + bizChatRequest.getBizType());
+        }
+        log.info("业务场景对话, bizType={}, promptName={}", bizChatRequest.getBizType(), prompt.getPromptName());
+        bizChatRequest.setSystemPrompt(prompt.getPromptContent());
+        return sseChat(bizChatRequest);
     }
 
     /**
@@ -472,6 +497,11 @@ public class ChatServiceFacade implements IChatService {
     private List<ChatMessage> buildContextMessages(ChatRequest chatRequest) {
         List<ChatMessage> messages = new ArrayList<>();
 
+        if (StringUtils.isNotBlank(chatRequest.getSystemPrompt())) {
+            messages.add(SystemMessage.from(chatRequest.getSystemPrompt()));
+            log.debug("已注入业务系统提示词, 长度={}", chatRequest.getSystemPrompt().length());
+        }
+
         // 1. 初始化当前用户消息
         UserMessage userMessage = UserMessage.userMessage(chatRequest.getContent());
 
@@ -551,9 +581,6 @@ public class ChatServiceFacade implements IChatService {
                 messages.add(new AiMessage(prompt));
             }
         }
-
-        // 构建当前用户消息（放在最后）
-        UserMessage userMessage = UserMessage.userMessage(chatRequest.getContent());
         // 4. 添加经过增强的用户消息（放在最后）
         messages.add(userMessage);
 

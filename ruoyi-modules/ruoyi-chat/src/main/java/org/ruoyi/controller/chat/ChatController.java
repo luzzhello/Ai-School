@@ -1,10 +1,9 @@
 package org.ruoyi.controller.chat;
 
-import jakarta.servlet.http.HttpServletRequest;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.ruoyi.common.chat.domain.dto.request.AgentChatRequest;
+import org.ruoyi.common.chat.domain.dto.request.BizChatRequest;
 import org.ruoyi.common.chat.domain.dto.request.ChatRequest;
 import org.ruoyi.service.chat.impl.ChatServiceFacade;
 import org.springframework.stereotype.Controller;
@@ -33,6 +32,17 @@ public class ChatController {
     @ResponseBody
     public SseEmitter sseChat(@RequestBody @Valid ChatRequest chatRequest) {
         return chatService.sseChat(chatRequest);
+    }
+
+    /**
+     * 业务场景聊天接口
+     * <p>
+     * 根据 bizType 自动加载 chat_prompt 表中对应的系统提示词
+     */
+    @PostMapping("/biz/send")
+    @ResponseBody
+    public SseEmitter sseBizChat(@RequestBody @Valid BizChatRequest bizChatRequest) {
+        return chatService.sseBizChat(bizChatRequest);
     }
 
 }

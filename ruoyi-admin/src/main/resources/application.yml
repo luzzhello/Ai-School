@@ -313,3 +313,9 @@ vector-store:
     collectionname: LocalKnowledge
     api-key:
     use-tls: false
+
+--- # ER 图生成配置
+chat:
+  model:
+    # 默认对话模型（对应 chat_model 表中的 model_name）
+    default-model: deepseek-v4-pro
