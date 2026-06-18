@@ -18,6 +18,8 @@ import org.ruoyi.domain.dto.request.FuncTestExportRequest;
 import org.ruoyi.domain.vo.chat.ChatPromptVo;
 import org.ruoyi.service.chat.IChatPromptService;
 import org.ruoyi.service.draw.IFuncTestService;
+import org.ruoyi.service.usercenter.FeatureCodes;
+import org.ruoyi.service.usercenter.IFeatureCoinService;
 import org.springframework.stereotype.Service;
 
 import java.io.IOException;
@@ -51,10 +53,13 @@ public class FuncTestServiceImpl implements IFuncTestService {
     private final IChatPromptService chatPromptService;
     private final ErDiagramProperties erDiagramProperties;
     private final ObjectMapper objectMapper;
+    private final IFeatureCoinService featureCoinService;
 
     @Override
     public void exportWord(FuncTestExportRequest request, HttpServletResponse response) {
         validateRequest(request);
+        String featureCode = isAiMode(request) ? FeatureCodes.FUNC_TEST_AI : FeatureCodes.FUNC_TEST_MANUAL;
+        featureCoinService.requireAffordableForLoginUser(featureCode, null);
         try {
             String title;
             List<FuncTestCaseData> cases;
@@ -77,6 +82,7 @@ public class FuncTestServiceImpl implements IFuncTestService {
             FileUtils.setAttachmentResponseHeader(response, filename);
             response.getOutputStream().write(bytes);
             response.getOutputStream().flush();
+            featureCoinService.chargeForLoginUser(featureCode, null);
         } catch (ServiceException e) {
             throw e;
         } catch (IOException e) {

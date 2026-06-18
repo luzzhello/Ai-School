@@ -63,6 +63,8 @@ spring:
     # 开启虚拟线程 仅jdk21可用
     virtual:
       enabled: false
+  main:
+    allow-circular-references: true
   task:
     execution:
       # 从 springboot 3.5 开始 spring自带线程池
@@ -125,6 +127,19 @@ security:
     - /*/api-docs/**
     - /warm-flow-ui/config
     - /workflow/run
+    - /user/**
+    - /usercenter/wallet/alipay/notify
+
+# 微信公众号扫码登录
+wx:
+  mp:
+    enabled: true
+    # 微信公众平台「服务器配置」中的 Token，用于签名校验
+    token: CHANGE_ME
+    # 可留空，默认读取 justauth.type.wechat_mp
+    app-id:
+    app-secret:
+    expire-seconds: 600
 # 多租户配置
 tenant:
   # 是否开启
@@ -141,6 +156,41 @@ tenant:
     - sys_client
     - sys_oss_config
     - flow_spel
+    - uc_wallet
+    - uc_wallet_log
+    - uc_user_membership
+    - uc_work_file
+    - uc_check_in_log
+    - uc_invite_bind
+    - uc_activity_submission
+    - uc_redeem_code
+    - uc_redeem_log
+    - uc_feature_price
+    - uc_membership_feature_quota
+    - uc_feature_daily_usage
+    - uc_wallet_pay_order
+    - doc_agent_task_def
+    - doc_agent_session
+    - doc_agent_task_record
+
+# 支付宝支付（金币充值 / 会员补差）
+# sign-mode: key=公钥模式（开发简单）  cert=证书模式（正式推荐）
+alipay:
+  pay:
+    enabled: true
+    sign-mode: key
+    app-id: ""
+    private-key: ""
+    # 公钥模式
+    alipay-public-key: ""
+    # 证书模式（sign-mode=cert 时填写，填服务器上 .crt 绝对路径）
+    app-cert-path: ""
+    alipay-cert-path: ""
+    root-cert-path: ""
+    gateway-url: https://openapi.alipay.com/gateway.do
+    notify-url: ""
+    return-url: ""
+    subject: 码蚁校园金币充值
 
 # MyBatisPlus配置
 # https://baomidou.com/config/
@@ -273,12 +323,14 @@ demo:
     - /register
     - /captcha/**
     - /auth/**
+    - /user/**
     - /chat/send
     - /system/session/**
     - /system/message/**
     - /system/attach/**
     - /system/fragment/**
     - /system/info/**
+    - /front/register
 --- # warm-flow工作流配置
 warm-flow:
   # 是否开启工作流，默认true

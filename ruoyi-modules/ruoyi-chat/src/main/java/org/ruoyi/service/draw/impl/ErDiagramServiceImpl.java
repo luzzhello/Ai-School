@@ -14,11 +14,15 @@ import org.ruoyi.config.ErDiagramProperties;
 import org.ruoyi.domain.dto.request.ErDiagramGenerateRequest;
 import org.ruoyi.domain.dto.request.ErSqlOptimizeRequest;
 import org.ruoyi.domain.dto.response.ErDiagramResponse;
+import org.ruoyi.domain.dto.response.ErEntityAttributeDiagramVo;
+import org.ruoyi.domain.dto.response.ErEntityMetaVo;
 import org.ruoyi.domain.dto.response.ErSqlOptimizeResponse;
 import org.ruoyi.domain.dto.response.ErSqlTestResponse;
 import org.ruoyi.domain.vo.chat.ChatPromptVo;
 import org.ruoyi.service.chat.IChatPromptService;
 import org.ruoyi.service.draw.IErDiagramService;
+import org.ruoyi.service.usercenter.FeatureCodes;
+import org.ruoyi.service.usercenter.IFeatureCoinService;
 import org.springframework.stereotype.Service;
 
 import java.util.ArrayList;
@@ -76,6 +80,7 @@ public class ErDiagramServiceImpl implements IErDiagramService {
     private final IChatPromptService chatPromptService;
     private final ErDiagramProperties erDiagramProperties;
     private final ObjectMapper objectMapper;
+    private final IFeatureCoinService featureCoinService;
 
     @Override
     public ErDiagramResponse generate(ErDiagramGenerateRequest request) {
@@ -121,19 +126,19 @@ public class ErDiagramServiceImpl implements IErDiagramService {
     }
 
     private ErDiagramResponse generateFromSql(String sql) {
+        featureCoinService.requireAffordableForLoginUser(FeatureCodes.ER_SQL, null);
         log.info("本地解析 SQL 生成陈氏 ER 图");
         SqlChenErParser.ParseResult parsed = SqlChenErParser.parse(sql);
-        ChenErLayoutBuilder.ChenDiagram diagram = ChenErLayoutBuilder.build(
+        ChenErLayoutBuilder.ErDiagramBundle bundle = ChenErLayoutBuilder.buildBundle(
             parsed.entities(),
             parsed.relationships()
         );
-        return ErDiagramResponse.builder()
-            .nodes(diagram.nodes())
-            .edges(diagram.edges())
-            .build();
+        featureCoinService.chargeForLoginUser(FeatureCodes.ER_SQL, null);
+        return toResponse(bundle, parsed.entities());
     }
 
     private ErDiagramResponse generateFromAi(ErDiagramGenerateRequest request) {
+        featureCoinService.requireAffordableForLoginUser(FeatureCodes.ER_AI, null);
         String modelName = resolveModelName(request.getModel());
         ChatModel model = buildModel(modelName);
         String userInput = buildUserInput(request);
@@ -147,12 +152,10 @@ public class ErDiagramServiceImpl implements IErDiagramService {
 
         List<ChenErLayoutBuilder.EntityDef> entities = parseEntities(root.path("entities"));
         List<ChenErLayoutBuilder.RelationshipDef> relationships = parseRelationships(root.path("relationships"));
-        ChenErLayoutBuilder.ChenDiagram diagram = ChenErLayoutBuilder.build(entities, relationships);
+        ChenErLayoutBuilder.ErDiagramBundle bundle = ChenErLayoutBuilder.buildBundle(entities, relationships);
 
-        return ErDiagramResponse.builder()
-            .nodes(diagram.nodes())
-            .edges(diagram.edges())
-            .build();
+        featureCoinService.chargeForLoginUser(FeatureCodes.ER_AI, null);
+        return toResponse(bundle, entities);
     }
 
     private void validateRequest(ErDiagramGenerateRequest request) {
@@ -195,18 +198,17 @@ public class ErDiagramServiceImpl implements IErDiagramService {
         return """
             你是数据库概念设计专家。根据业务描述输出陈氏 ER 图 JSON（概念层，不是物理表结构）。
 
-            样式参照教材总体 E-R 图（一张图同时包含全部元素）：
-            - 矩形 = 实体
-            - 椭圆 = 属性（每个实体 4~6 个，第一个属性为主键/编号类）
-            - 菱形 = 关系（动词：属于、选修、开设、管理、包含等）
-            - 实体与关系连线上用 cardinalityA/cardinalityB 标注 1 或 n（小方框显示）
+            样式参照教材：
+            - 总体 E-R 图（图 4.6）：仅含矩形实体 + 菱形关系 + 基数 1/n，不要在总体图中画属性
+            - 每个实体单独一张属性图（图 4.7）：实体在下方，4~8 个属性写在 attributes 里供分图使用
 
             要求：
-            1) entities：实体中文名 + attributes 属性列表（4~6 个关键属性，不要 SQL 类型）
-            2) relationships：关系动词，entityA/entityB 引用已有实体
-            3) cardinalityA/cardinalityB 取值 1 或 n
-            4) 多对多通过菱形关系表达；实体间可有多条不同关系
-            5) 仅输出 JSON，不要建表语句
+            1) entities：实体中文名 + attributes 属性列表（4~8 个，第一个为主键/编号类）
+            2) relationships：每条关系是二元关系，菱形 name 为动词短语，entityA/entityB 各引用一个已有实体
+            3) 禁止一个菱形同时关联三个及以上实体；管理员与多个业务实体须拆成多个独立菱形（如管理活动、管理路线）
+            4) cardinalityA/cardinalityB 取值 1 或 n；m:n 在总体图用菱形表达，属性图单独展开
+            5) 业务动词准确：路线用收藏/打卡，活动用报名，论坛用发帖/互动
+            6) 仅输出 JSON，不要建表语句
             """;
     }
 
@@ -269,6 +271,7 @@ public class ErDiagramServiceImpl implements IErDiagramService {
                     }
                 }
             }
+            attributes = ensureAttributes(name, attributes);
             entities.add(new ChenErLayoutBuilder.EntityDef(name, attributes));
         }
         if (entities.isEmpty()) {
@@ -298,5 +301,54 @@ public class ErDiagramServiceImpl implements IErDiagramService {
             ));
         }
         return relationships;
+    }
+
+    /** AI 未返回属性时补全默认属性，确保能生成实体属性图 */
+    private List<String> ensureAttributes(String entityName, List<String> attributes) {
+        if (attributes != null && !attributes.isEmpty()) {
+            return attributes.size() > 10 ? attributes.subList(0, 10) : attributes;
+        }
+        String prefix = StringUtils.isNotBlank(entityName) ? entityName : "实体";
+        return List.of(
+            prefix + "编号",
+            prefix + "名称",
+            "描述",
+            "状态",
+            "创建时间",
+            "更新时间"
+        );
+    }
+
+    private ErDiagramResponse toResponse(ChenErLayoutBuilder.ErDiagramBundle bundle,
+                                         List<ChenErLayoutBuilder.EntityDef> entityDefs) {
+        List<ErEntityAttributeDiagramVo> attributeDiagrams = new ArrayList<>();
+        List<ErEntityMetaVo> entityMetas = new ArrayList<>();
+        for (ChenErLayoutBuilder.EntityDef def : entityDefs) {
+            ErEntityMetaVo meta = new ErEntityMetaVo();
+            meta.setName(def.name());
+            meta.setAttributes(def.attributes());
+            entityMetas.add(meta);
+        }
+        List<ChenErLayoutBuilder.ChenDiagram> attrList = bundle.attributeDiagrams();
+        List<String> names = bundle.entityNames();
+        for (int i = 0; i < attrList.size(); i++) {
+            ChenErLayoutBuilder.ChenDiagram attr = attrList.get(i);
+            ErEntityAttributeDiagramVo vo = new ErEntityAttributeDiagramVo();
+            vo.setEntityName(i < names.size() ? names.get(i) : "实体");
+            vo.setEntityId(attr.nodes().stream()
+                .filter(n -> "entity".equals(n.getType()))
+                .map(n -> n.getId())
+                .findFirst()
+                .orElse(""));
+            vo.setNodes(attr.nodes());
+            vo.setEdges(attr.edges());
+            attributeDiagrams.add(vo);
+        }
+        return ErDiagramResponse.builder()
+            .nodes(bundle.overview().nodes())
+            .edges(bundle.overview().edges())
+            .attributeDiagrams(attributeDiagrams)
+            .entities(entityMetas)
+            .build();
     }
 }

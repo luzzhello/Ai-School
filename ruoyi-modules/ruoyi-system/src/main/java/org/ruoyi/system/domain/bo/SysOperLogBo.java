@@ -5,6 +5,7 @@ import org.ruoyi.system.domain.SysOperLog;
 import io.github.linpeilie.annotations.AutoMapper;
 import io.github.linpeilie.annotations.AutoMappers;
 import lombok.Data;
+import org.ruoyi.system.domain.SysOssConfig;
 
 import java.util.Date;
 import java.util.HashMap;

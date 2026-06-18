@@ -70,4 +70,21 @@ public interface ISysNoticeService {
      * @return 结果
      */
     int deleteNoticeByIds(Long[] noticeIds);
+
+    /**
+     * C 端分页查询已发布的通知公告（status=0）
+     *
+     * @param noticeType 公告类型：1通知 2公告，空则全部
+     */
+    TableDataInfo<SysNoticeVo> selectPublicPageList(String noticeType, PageQuery pageQuery);
+
+    /**
+     * C 端查询已发布的通知公告详情
+     */
+    SysNoticeVo selectPublicNoticeById(Long noticeId);
+
+    /**
+     * C 端获取最新一条已发布的通知公告
+     */
+    SysNoticeVo selectLatestPublicNotice();
 }

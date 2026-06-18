@@ -3,7 +3,9 @@ package org.ruoyi.system.service.impl;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.core.toolkit.Wrappers;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
+import cn.hutool.core.collection.CollUtil;
 import lombok.RequiredArgsConstructor;
+import org.ruoyi.common.core.exception.ServiceException;
 import org.ruoyi.common.core.utils.MapstructUtils;
 import org.ruoyi.common.core.utils.ObjectUtils;
 import org.ruoyi.common.core.utils.StringUtils;
@@ -127,5 +129,36 @@ public class SysNoticeServiceImpl implements ISysNoticeService {
     @Override
     public int deleteNoticeByIds(Long[] noticeIds) {
         return baseMapper.deleteByIds(Arrays.asList(noticeIds));
+    }
+
+    @Override
+    public TableDataInfo<SysNoticeVo> selectPublicPageList(String noticeType, PageQuery pageQuery) {
+        LambdaQueryWrapper<SysNotice> lqw = Wrappers.lambdaQuery();
+        lqw.eq(SysNotice::getStatus, "0");
+        lqw.eq(StringUtils.isNotBlank(noticeType), SysNotice::getNoticeType, noticeType);
+        lqw.orderByDesc(SysNotice::getCreateTime);
+        Page<SysNoticeVo> page = baseMapper.selectVoPage(pageQuery.build(), lqw);
+        return TableDataInfo.build(page);
+    }
+
+    @Override
+    public SysNoticeVo selectPublicNoticeById(Long noticeId) {
+        SysNoticeVo vo = baseMapper.selectVoById(noticeId);
+        if (vo == null || !"0".equals(vo.getStatus())) {
+            throw new ServiceException("公告不存在或已关闭");
+        }
+        return vo;
+    }
+
+    @Override
+    public SysNoticeVo selectLatestPublicNotice() {
+        LambdaQueryWrapper<SysNotice> lqw = Wrappers.lambdaQuery();
+        lqw.eq(SysNotice::getStatus, "0");
+        lqw.orderByDesc(SysNotice::getCreateTime);
+        // 用分页取 1 条，避免 last("LIMIT 1") 与拦截器拼 SQL 冲突；selectOne 会查全表再取第一条
+        Page<SysNotice> page = new Page<>(1, 1);
+        page.setSearchCount(false);
+        List<SysNoticeVo> records = baseMapper.selectVoPage(page, lqw).getRecords();
+        return CollUtil.getFirst(records);
     }
 }

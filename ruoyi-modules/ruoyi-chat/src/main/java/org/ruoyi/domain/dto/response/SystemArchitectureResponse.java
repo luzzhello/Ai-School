@@ -14,4 +14,6 @@ public class SystemArchitectureResponse {
     private String archType;
 
     private List<SystemArchitectureLayerVo> layers;
+
+    private List<SystemArchitectureConnectionVo> connections;
 }

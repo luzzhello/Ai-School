@@ -15,6 +15,8 @@ import org.ruoyi.domain.dto.request.SqlThreeLineExportRequest;
 import org.ruoyi.domain.vo.chat.ChatPromptVo;
 import org.ruoyi.service.chat.IChatPromptService;
 import org.ruoyi.service.draw.ISqlThreeLineService;
+import org.ruoyi.service.usercenter.FeatureCodes;
+import org.ruoyi.service.usercenter.IFeatureCoinService;
 import org.springframework.stereotype.Service;
 
 import java.io.IOException;
@@ -30,10 +32,13 @@ public class SqlThreeLineServiceImpl implements ISqlThreeLineService {
     private final IChatModelService chatModelService;
     private final IChatPromptService chatPromptService;
     private final ErDiagramProperties erDiagramProperties;
+    private final IFeatureCoinService featureCoinService;
 
     @Override
     public void exportWord(SqlThreeLineExportRequest request, HttpServletResponse response) {
         validateRequest(request);
+        String featureCode = isSqlMode(request) ? FeatureCodes.SQL_THREE_LINE_SQL : FeatureCodes.SQL_THREE_LINE_AI;
+        featureCoinService.requireAffordableForLoginUser(featureCode, null);
         try {
             String sql = resolveSql(request);
             List<SqlTableDocParser.SqlTableDef> tables = SqlTableDocParser.parse(sql);
@@ -43,6 +48,7 @@ public class SqlThreeLineServiceImpl implements ISqlThreeLineService {
             FileUtils.setAttachmentResponseHeader(response, filename);
             response.getOutputStream().write(bytes);
             response.getOutputStream().flush();
+            featureCoinService.chargeForLoginUser(featureCode, null);
         } catch (ServiceException e) {
             throw e;
         } catch (IOException e) {

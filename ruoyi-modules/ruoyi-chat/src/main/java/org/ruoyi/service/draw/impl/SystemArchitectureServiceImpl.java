@@ -12,12 +12,15 @@ import org.ruoyi.common.core.exception.ServiceException;
 import org.ruoyi.common.core.utils.StringUtils;
 import org.ruoyi.config.ErDiagramProperties;
 import org.ruoyi.domain.dto.request.SystemArchitectureGenerateRequest;
+import org.ruoyi.domain.dto.response.SystemArchitectureConnectionVo;
 import org.ruoyi.domain.dto.response.SystemArchitectureItemVo;
 import org.ruoyi.domain.dto.response.SystemArchitectureLayerVo;
 import org.ruoyi.domain.dto.response.SystemArchitectureResponse;
 import org.ruoyi.domain.vo.chat.ChatPromptVo;
 import org.ruoyi.service.chat.IChatPromptService;
 import org.ruoyi.service.draw.ISystemArchitectureService;
+import org.ruoyi.service.usercenter.FeatureCodes;
+import org.ruoyi.service.usercenter.IFeatureCoinService;
 import org.springframework.stereotype.Service;
 
 import java.util.ArrayList;
@@ -32,23 +35,53 @@ public class SystemArchitectureServiceImpl implements ISystemArchitectureService
 
     private static final String JSON_SCHEMA = """
         {
-          "title": "系统架构图",
+          "title": "零食超市系统架构图",
           "layers": [
             {
-              "id": "l1",
-              "label": "用户层",
+              "id": "presentation",
+              "label": "表示层",
               "items": [
-                { "id": "i1", "label": "Web 应用" },
-                { "id": "i2", "label": "移动 App" }
+                { "id": "vue_frontend", "label": "零食超市系统前端 (Vue)" },
+                { "id": "admin_frontend", "label": "后台管理前端" },
+                { "id": "vo", "label": "VO" },
+                { "id": "controller", "label": "Controller" }
               ]
             },
             {
-              "id": "l2",
-              "label": "业务层",
+              "id": "business",
+              "label": "业务逻辑层",
               "items": [
-                { "id": "i3", "label": "用户服务" }
+                { "id": "service_iface", "label": "Service 接口" },
+                { "id": "service_impl", "label": "Service 实现类" },
+                { "id": "domain_model", "label": "业务领域模型" },
+                { "id": "dto", "label": "DTO" }
+              ]
+            },
+            {
+              "id": "data_access",
+              "label": "数据访问层",
+              "items": [
+                { "id": "mapper", "label": "MyBatis Mapper" },
+                { "id": "entity", "label": "Entity (PO)" }
+              ]
+            },
+            {
+              "id": "infrastructure",
+              "label": "基础设施与数据层",
+              "items": [
+                { "id": "mysql", "label": "MySQL 数据库" },
+                { "id": "redis", "label": "Redis 缓存" }
               ]
             }
+          ],
+          "connections": [
+            { "id": "c1", "from": "vue_frontend", "to": "controller" },
+            { "id": "c2", "from": "admin_frontend", "to": "controller" },
+            { "id": "c3", "from": "controller", "to": "service_iface" },
+            { "id": "c4", "from": "service_iface", "to": "service_impl" },
+            { "id": "c5", "from": "service_impl", "to": "mapper" },
+            { "id": "c6", "from": "mapper", "to": "mysql" },
+            { "id": "c7", "from": "service_impl", "to": "redis" }
           ]
         }
         """;
@@ -57,30 +90,41 @@ public class SystemArchitectureServiceImpl implements ISystemArchitectureService
     private final IChatPromptService chatPromptService;
     private final ErDiagramProperties erDiagramProperties;
     private final ObjectMapper objectMapper;
+    private final IFeatureCoinService featureCoinService;
 
     @Override
     public SystemArchitectureResponse generate(SystemArchitectureGenerateRequest request) {
         if (StringUtils.isBlank(request.getDescription())) {
             throw new ServiceException("系统架构描述不能为空");
         }
+        featureCoinService.requireAffordableForLoginUser(FeatureCodes.SYSTEM_ARCHITECTURE_AI, null);
         String archType = normalizeArchType(request.getArchType());
         String modelName = resolveModelName(request.getModel());
         ChatModel model = buildModel(modelName);
         String systemPrompt = loadSystemPrompt(archType);
         String fullPrompt = systemPrompt + "\n\n严格输出 JSON，不要 markdown 代码块，结构如下：\n" + JSON_SCHEMA
+            + "\n\n要求：固定四层逻辑架构（表示层/业务逻辑层/数据访问层/基础设施与数据层），自上而下排列；"
+            + "items 为具体组件，禁止把层名写入 items；connections 的 from/to 引用 item.id（可跨层）；"
+            + "必须覆盖 前端→Controller→Service→Mapper→MySQL/Redis 完整调用链；"
+            + "禁止出现 Docker/Kubernetes/ELK/Prometheus/Grafana 等运维监控组件；不要 color 与坐标字段。"
             + "\n\n用户需求：\n" + request.getDescription();
 
         log.info("开始生成系统架构图, archType={}, model={}", archType, modelName);
         String raw = model.chat(fullPrompt);
         JsonNode root = parseJson(raw);
         List<SystemArchitectureLayerVo> layers = parseLayers(root.path("layers"));
+        List<SystemArchitectureConnectionVo> connections = parseConnections(root);
         String title = root.path("title").asText("系统架构图");
 
-        return SystemArchitectureResponse.builder()
+        featureCoinService.chargeForLoginUser(FeatureCodes.SYSTEM_ARCHITECTURE_AI, null);
+        SystemArchitectureResponse build = SystemArchitectureResponse.builder()
             .title(title)
             .archType(archType)
             .layers(layers)
+            .connections(connections)
             .build();
+        log.info("生成系统架构图成功, archType={}, model={}, response={}", archType, modelName, build);
+        return build;
     }
 
     private String normalizeArchType(String archType) {
@@ -97,30 +141,43 @@ public class SystemArchitectureServiceImpl implements ISystemArchitectureService
         }
         return switch (archType) {
             case "type2" -> """
-                你是系统架构师。根据描述输出分层系统架构图 JSON（5~6 层，精简版）。
+                你是系统架构师。根据描述输出论文级标准逻辑分层架构图 JSON（固定四层，精简版）。
 
-                要求：
-                1) layers 自上而下排列，每层含 label 与 items 数组
-                2) 推荐层级：用户层、接入层、业务层、数据层、基础设施层（可按需调整）
-                3) 每层 items 3~6 个，label 简洁中文
-                4) id 唯一，仅输出 JSON
+                四层结构（自上而下，layer.label 必须使用下列名称）：
+                1) 表示层：系统前端、后台管理前端、VO、Controller
+                2) 业务逻辑层：Service 接口、Service 实现类、DTO（可按模块增减）
+                3) 数据访问层：MyBatis Mapper、Entity (PO)
+                4) 基础设施与数据层：MySQL、Redis（如有）
+
+                要求：每层 items 2~4 个；connections 覆盖 前端→Controller→Service→Mapper→MySQL/Redis；id 唯一；仅输出 JSON
                 """;
             case "type3" -> """
-                你是系统架构师。根据描述输出微服务系统架构图 JSON（6~8 层）。
+                你是系统架构师。根据描述输出微服务云原生体系结构图 JSON（5~7 层）。
 
                 要求：
-                1) layers 自上而下，偏微服务/云原生（网关、服务、中间件、存储、监控等）
-                2) 每层 items 4~8 个，可含具体技术组件名
-                3) id 唯一，仅输出 JSON
+                1) layers 含网关、微服务、中间件、存储、监控等
+                2) connections 完整描述服务调用与数据访问关系
+                3) id 唯一；仅输出 JSON
                 """;
             default -> """
-                你是系统架构师。根据描述输出经典分层系统架构图 JSON（6~8 层）。
+                你是系统架构师。根据描述输出论文级标准逻辑分层架构图 JSON（固定四层）。
+
+                四层结构（自上而下，layer.label 必须使用下列名称）：
+                1) 表示层 (Presentation Layer)：系统前端 (Vue/Tailwind CSS)、后台管理前端、VO、Controller
+                   — 负责与用户交互，接收 HTTP 请求，返回 JSON 或视图
+                2) 业务逻辑层 (Business Layer)：Service 接口、Service 实现类、业务领域模型、DTO
+                   — 处理核心业务逻辑（订单处理、库存扣减、数据校验等）
+                   — 禁止放入 Docker/Kubernetes/ELK/Prometheus/Grafana 等运维监控组件
+                3) 数据访问层 (Data Access Layer)：DAO / Repository / MyBatis Mapper、Entity (PO)
+                   — 负责与数据库交互，实现数据持久化
+                4) 基础设施与数据层 (Infrastructure)：MySQL 数据库、Redis 缓存（如有）
+                   — 提供底层数据存储与软件支撑
 
                 要求：
-                1) layers 数组自上而下，常见层级如：用户层、接入层、业务层、服务层、存储层、基础设施层、安全层（按场景取舍）
-                2) 每层 items 3~8 个组件/模块，label 简洁中文或中英文
-                3) 所有 id 唯一；不要 color 字段（前端自动配色）
-                4) 仅输出 JSON，不要解释
+                1) 固定 4 层，将前端/后端/数据库融合为一张统一的分层架构图，禁止拆成多张或多余层
+                2) items 为具体组件，label 根据用户系统名称替换（如「零食超市系统前端」），不得把层名写入 items
+                3) connections 必须覆盖 前端→Controller→Service→Mapper→MySQL/Redis 完整调用链
+                4) 所有 id 唯一；不要 color 字段；仅输出 JSON
                 """;
         };
     }
@@ -211,5 +268,30 @@ public class SystemArchitectureServiceImpl implements ISystemArchitectureService
             items.add(item);
         }
         return items;
+    }
+
+    private List<SystemArchitectureConnectionVo> parseConnections(JsonNode root) {
+        JsonNode connNode = root.has("connections") ? root.path("connections") : root.path("edges");
+        List<SystemArchitectureConnectionVo> connections = new ArrayList<>();
+        if (!connNode.isArray()) {
+            return connections;
+        }
+        for (JsonNode node : connNode) {
+            String from = node.path("from").asText("");
+            String to = node.path("to").asText("");
+            if (StringUtils.isBlank(from) || StringUtils.isBlank(to)) {
+                continue;
+            }
+            SystemArchitectureConnectionVo conn = new SystemArchitectureConnectionVo();
+            conn.setId(node.path("id").asText("c_" + from + "_" + to));
+            conn.setFrom(from);
+            conn.setTo(to);
+            String label = node.path("label").asText(null);
+            if (StringUtils.isNotBlank(label)) {
+                conn.setLabel(label);
+            }
+            connections.add(conn);
+        }
+        return connections;
     }
 }

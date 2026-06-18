@@ -17,6 +17,8 @@ import org.ruoyi.domain.dto.response.MindMapResponse;
 import org.ruoyi.domain.vo.chat.ChatPromptVo;
 import org.ruoyi.service.chat.IChatPromptService;
 import org.ruoyi.service.draw.IMindMapService;
+import org.ruoyi.service.usercenter.FeatureCodes;
+import org.ruoyi.service.usercenter.IFeatureCoinService;
 import org.springframework.stereotype.Service;
 
 import java.util.ArrayList;
@@ -43,12 +45,14 @@ public class MindMapServiceImpl implements IMindMapService {
     private final IChatPromptService chatPromptService;
     private final ErDiagramProperties erDiagramProperties;
     private final ObjectMapper objectMapper;
+    private final IFeatureCoinService featureCoinService;
 
     @Override
     public MindMapResponse generate(MindMapGenerateRequest request) {
         if (StringUtils.isBlank(request.getDescription())) {
             throw new ServiceException("主题描述不能为空");
         }
+        featureCoinService.requireAffordableForLoginUser(FeatureCodes.MIND_MAP_AI, null);
         String modelName = resolveModelName(request.getModel());
         ChatModel model = buildModel(modelName);
         String systemPrompt = loadSystemPrompt();
@@ -66,6 +70,7 @@ public class MindMapServiceImpl implements IMindMapService {
             .findFirst()
             .orElse(nodes.isEmpty() ? "" : nodes.get(0).getId());
 
+        featureCoinService.chargeForLoginUser(FeatureCodes.MIND_MAP_AI, null);
         return MindMapResponse.builder()
             .nodes(nodes)
             .rootId(rootId)

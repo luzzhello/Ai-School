@@ -15,5 +15,5 @@ public class ErDiagramProperties {
     /**
      * 默认对话模型名称（对应 chat_model.model_name）
      */
-    private String defaultModel = "deepseek-v4-pro";
+    private String defaultModel = "deepseek-v4-flash";
 }

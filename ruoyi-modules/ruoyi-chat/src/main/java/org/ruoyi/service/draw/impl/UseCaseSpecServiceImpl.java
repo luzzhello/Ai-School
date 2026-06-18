@@ -18,6 +18,8 @@ import org.ruoyi.domain.dto.request.UseCaseSpecExportRequest;
 import org.ruoyi.domain.vo.chat.ChatPromptVo;
 import org.ruoyi.service.chat.IChatPromptService;
 import org.ruoyi.service.draw.IUseCaseSpecService;
+import org.ruoyi.service.usercenter.FeatureCodes;
+import org.ruoyi.service.usercenter.IFeatureCoinService;
 import org.springframework.stereotype.Service;
 
 import java.io.IOException;
@@ -47,10 +49,13 @@ public class UseCaseSpecServiceImpl implements IUseCaseSpecService {
     private final IChatPromptService chatPromptService;
     private final ErDiagramProperties erDiagramProperties;
     private final ObjectMapper objectMapper;
+    private final IFeatureCoinService featureCoinService;
 
     @Override
     public void exportWord(UseCaseSpecExportRequest request, HttpServletResponse response) {
         validateRequest(request);
+        String featureCode = isAiMode(request) ? FeatureCodes.USE_CASE_SPEC_AI : FeatureCodes.USE_CASE_SPEC_MANUAL;
+        featureCoinService.requireAffordableForLoginUser(featureCode, null);
         try {
             UseCaseSpecData spec = resolveSpec(request);
             int chapter = request.getChapterNumber() != null ? request.getChapterNumber() : 3;
@@ -61,6 +66,7 @@ public class UseCaseSpecServiceImpl implements IUseCaseSpecService {
             FileUtils.setAttachmentResponseHeader(response, filename);
             response.getOutputStream().write(bytes);
             response.getOutputStream().flush();
+            featureCoinService.chargeForLoginUser(featureCode, null);
         } catch (ServiceException e) {
             throw e;
         } catch (IOException e) {

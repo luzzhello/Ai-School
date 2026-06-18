@@ -1,7 +1,6 @@
 package org.ruoyi.service.draw.impl;
 
 
-
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ArrayNode;
@@ -9,13 +8,9 @@ import com.fasterxml.jackson.databind.node.ObjectNode;
 
 import dev.langchain4j.model.chat.ChatModel;
 
-import dev.langchain4j.model.openai.OpenAiChatModel;
-
 import lombok.RequiredArgsConstructor;
 
 import lombok.extern.slf4j.Slf4j;
-
-import org.ruoyi.common.chat.domain.vo.chat.ChatModelVo;
 
 import org.ruoyi.common.chat.service.chat.IChatModelService;
 
@@ -40,13 +35,12 @@ import org.ruoyi.service.draw.SoftwareDiagramTypes;
 import org.springframework.stereotype.Service;
 
 
-
+import java.util.HashMap;
 import java.util.Map;
 
 import java.util.regex.Matcher;
 
 import java.util.regex.Pattern;
-
 
 
 @Slf4j
@@ -58,27 +52,35 @@ import java.util.regex.Pattern;
 public class SoftwareDiagramServiceImpl implements ISoftwareDiagramService {
 
 
-
     private static final String USECASE_JSON_SCHEMA = """
 
         {
 
-          "actors": [{ "id": "user", "label": "用户" }],
+          "actors": [
+
+            { "id": "student", "label": "学生" },
+
+            { "id": "teacher", "label": "教师督导" },
+
+            { "id": "admin", "label": "管理员" }
+
+          ],
 
           "useCases": [
 
-            { "id": "uc1", "label": "注册登录", "actorId": "user" },
+            { "id": "uc1", "label": "课程学习", "actorId": "student" },
 
-            { "id": "uc2", "label": "个人中心", "actorId": "user" },
+            { "id": "uc2", "label": "作业提交", "actorId": "student" },
 
-            { "id": "uc21", "label": "订单管理", "parentId": "uc2" }
+            { "id": "uc3", "label": "课程管理", "actorId": "teacher" },
+
+            { "id": "uc4", "label": "用户管理", "actorId": "admin" }
 
           ]
 
         }
 
         """;
-
 
 
     private static final String GRAPH_JSON_SCHEMA = """
@@ -104,49 +106,39 @@ public class SoftwareDiagramServiceImpl implements ISoftwareDiagramService {
         """;
 
 
-
     private static final String CLASS_JSON_SCHEMA = """
 
         {
 
           "classes": [
 
-            {
+            { "id": "user", "name": "User", "attributes": ["- userId: Long", "- username: String"], "methods": ["+ login(username: String, password: String): boolean"] },
 
-              "id": "user",
+            { "id": "order", "name": "Order", "attributes": ["- orderId: Long", "- totalAmount: BigDecimal"], "methods": ["+ create(): void", "+ pay(): boolean"] },
 
-              "name": "User",
+            { "id": "order_item", "name": "OrderItem", "attributes": ["- quantity: int", "- unitPrice: double"], "methods": ["+ calcSubtotal(): double"] },
 
-              "attributes": ["- userId: String", "- username: String"],
+            { "id": "product", "name": "Product", "attributes": ["- productId: Long", "- name: String", "- price: double"], "methods": ["+ checkStock(qty: int): boolean"] },
 
-              "methods": ["+ login(): void", "+ register(): void"]
-
-            },
-
-            {
-
-              "id": "order",
-
-              "name": "Order",
-
-              "attributes": ["- orderId: String", "- amount: double"],
-
-              "methods": ["+ create(): void", "+ pay(): void"]
-
-            }
+            { "id": "payment", "name": "Payment", "attributes": ["- paymentId: Long", "- amount: double"], "methods": ["+ processPayment(): boolean"] }
 
           ],
 
           "relations": [
 
-            { "id": "r1", "from": "user", "to": "order", "type": "association", "label": "1..*" }
+            { "id": "r1", "from": "user", "to": "order", "type": "association", "fromMultiplicity": "1", "toMultiplicity": "0..*" },
+
+            { "id": "r2", "from": "order", "to": "order_item", "type": "composition", "fromMultiplicity": "1", "toMultiplicity": "1..*" },
+
+            { "id": "r3", "from": "order_item", "to": "product", "type": "aggregation", "fromMultiplicity": "1..*", "toMultiplicity": "1" },
+
+            { "id": "r4", "from": "order", "to": "payment", "type": "association", "fromMultiplicity": "1", "toMultiplicity": "0..1" }
 
           ]
 
         }
 
         """;
-
 
 
     private static final String ACTIVITY_JSON_SCHEMA = """
@@ -157,11 +149,27 @@ public class SoftwareDiagramServiceImpl implements ISoftwareDiagramService {
 
             { "id": "start", "kind": "start" },
 
-            { "id": "a1", "kind": "activity", "label": "浏览商品" },
+            { "id": "a_login", "kind": "activity", "label": "用户登录" },
 
-            { "id": "d1", "kind": "decision", "label": "是否登录?" },
+            { "id": "d_verify", "kind": "decision", "label": "验证成功?" },
 
-            { "id": "a2", "kind": "activity", "label": "填写地址" },
+            { "id": "a_error", "kind": "activity", "label": "显示错误信息" },
+
+            { "id": "a_home", "kind": "activity", "label": "显示主页" },
+
+            { "id": "a_select", "kind": "activity", "label": "用户选择功能" },
+
+            { "id": "d_func", "kind": "decision", "label": "功能类型?" },
+
+            { "id": "a_view", "kind": "activity", "label": "显示信息" },
+
+            { "id": "a_exec", "kind": "activity", "label": "执行操作" },
+
+            { "id": "a_update", "kind": "activity", "label": "更新数据" },
+
+            { "id": "m_branch", "kind": "decision", "label": "合流" },
+
+            { "id": "m_final", "kind": "decision", "label": "合流" },
 
             { "id": "end", "kind": "end" }
 
@@ -169,13 +177,33 @@ public class SoftwareDiagramServiceImpl implements ISoftwareDiagramService {
 
           "flows": [
 
-            { "id": "f1", "from": "start", "to": "a1" },
+            { "id": "f1", "from": "start", "to": "a_login" },
 
-            { "id": "f2", "from": "a1", "to": "d1" },
+            { "id": "f2", "from": "a_login", "to": "d_verify" },
 
-            { "id": "f3", "from": "d1", "to": "a2", "label": "[否]" },
+            { "id": "f3", "from": "d_verify", "to": "a_error", "label": "[否]" },
 
-            { "id": "f4", "from": "a2", "to": "end" }
+            { "id": "f4", "from": "d_verify", "to": "a_home", "label": "[是]" },
+
+            { "id": "f5", "from": "a_home", "to": "a_select" },
+
+            { "id": "f6", "from": "a_select", "to": "d_func" },
+
+            { "id": "f7", "from": "d_func", "to": "a_view", "label": "[查看]" },
+
+            { "id": "f8", "from": "d_func", "to": "a_exec", "label": "[操作]" },
+
+            { "id": "f9", "from": "a_exec", "to": "a_update" },
+
+            { "id": "f10", "from": "a_view", "to": "m_branch" },
+
+            { "id": "f11", "from": "a_update", "to": "m_branch" },
+
+            { "id": "f12", "from": "m_branch", "to": "m_final" },
+
+            { "id": "f13", "from": "a_error", "to": "m_final" },
+
+            { "id": "f14", "from": "m_final", "to": "end" }
 
           ]
 
@@ -183,6 +211,110 @@ public class SoftwareDiagramServiceImpl implements ISoftwareDiagramService {
 
         """;
 
+
+    private static final String ARCHITECTURE_JSON_SCHEMA = """
+
+        {
+
+          "title": "零食超市系统架构图",
+
+          "layers": [
+
+            {
+
+              "id": "presentation",
+
+              "label": "表示层",
+
+              "items": [
+
+                { "id": "vue_frontend", "label": "零食超市系统前端 (Vue)" },
+
+                { "id": "admin_frontend", "label": "后台管理前端" },
+
+                { "id": "vo", "label": "VO" },
+
+                { "id": "controller", "label": "Controller" }
+
+              ]
+
+            },
+
+            {
+
+              "id": "business",
+
+              "label": "业务逻辑层",
+
+              "items": [
+
+                { "id": "service_iface", "label": "Service 接口" },
+
+                { "id": "service_impl", "label": "Service 实现类" },
+
+                { "id": "domain_model", "label": "业务领域模型" },
+
+                { "id": "dto", "label": "DTO" }
+
+              ]
+
+            },
+
+            {
+
+              "id": "data_access",
+
+              "label": "数据访问层",
+
+              "items": [
+
+                { "id": "mapper", "label": "MyBatis Mapper" },
+
+                { "id": "entity", "label": "Entity (PO)" }
+
+              ]
+
+            },
+
+            {
+
+              "id": "infrastructure",
+
+              "label": "基础设施与数据层",
+
+              "items": [
+
+                { "id": "mysql", "label": "MySQL 数据库" },
+
+                { "id": "redis", "label": "Redis 缓存" }
+
+              ]
+
+            }
+
+          ],
+
+          "connections": [
+
+            { "id": "c1", "from": "vue_frontend", "to": "controller" },
+
+            { "id": "c2", "from": "admin_frontend", "to": "controller" },
+
+            { "id": "c3", "from": "controller", "to": "service_iface" },
+
+            { "id": "c4", "from": "service_iface", "to": "service_impl" },
+
+            { "id": "c5", "from": "service_impl", "to": "mapper" },
+
+            { "id": "c6", "from": "mapper", "to": "mysql" },
+
+            { "id": "c7", "from": "service_impl", "to": "redis" }
+
+          ]
+
+        }
+
+        """;
 
 
     private static final String SEQUENCE_JSON_SCHEMA = """
@@ -218,9 +350,7 @@ public class SoftwareDiagramServiceImpl implements ISoftwareDiagramService {
         """;
 
 
-
     private static final Map<String, String> SHAPE_HINTS = Map.ofEntries(
-
 
 
         Map.entry("state", "状态 rect 或 circle，转移边 label 标注条件。"),
@@ -231,18 +361,25 @@ public class SoftwareDiagramServiceImpl implements ISoftwareDiagramService {
 
         Map.entry("dfd", "外部实体 rect，处理 rect，数据存储可用 ellipse；数据流 label 标注数据名。"),
 
-        Map.entry("func_flow", "步骤 rect，判断 diamond，自上而下布局。"),
+        Map.entry("func_flow", """
+            标准流程图符号：开始/结束 ellipse（label=开始/结束各 1 个）；处理 rect；判断 diamond。
+            每个判断节点必须至少 2 条出边，且每条出边必须有 label（是/否 或 通过/不通过）。
+            禁止出现多个“结束”节点：全图只能有 1 个 label=结束 的 ellipse；所有分支最终汇合到同一结束节点。
+            主流程自上而下，分支左右展开，尽量避免交叉线；nodes 填写合理 x/y/width/height。
+            """),
 
         Map.entry("func_structure", "系统/模块/功能 rect，树形层级用 edges 连接。"),
 
-        Map.entry("architecture", "分层组件 rect，层间依赖用 edges。"),
+        Map.entry("architecture", """
+            分层架构 JSON：layers（表现层/业务层/数据层）+ connections（item.id 跨层连线）。
+            必须包含网关汇聚、服务调用、数据库访问完整链路；不要 color 与坐标。
+            """),
 
         Map.entry("deployment", "节点 rect，部署构件 rect，连线 label 标注通信/部署关系。"),
 
         Map.entry("swimlane", "泳道内步骤 rect，跨泳道流转用 edges；label 可含泳道名。")
 
     );
-
 
 
     private final IChatModelService chatModelService;
@@ -253,12 +390,10 @@ public class SoftwareDiagramServiceImpl implements ISoftwareDiagramService {
 
     private final ObjectMapper objectMapper;
 
-
+    private final org.ruoyi.service.usercenter.IFeatureCoinService featureCoinService;
 
     @Override
-
     public SoftwareDiagramResponse generate(String diagramType, SoftwareDiagramGenerateRequest request) {
-
         SoftwareDiagramTypes.validate(diagramType);
 
         if (StringUtils.isBlank(request.getDescription())) {
@@ -266,12 +401,12 @@ public class SoftwareDiagramServiceImpl implements ISoftwareDiagramService {
             throw new ServiceException("图表描述不能为空");
 
         }
-
+        featureCoinService.requireAffordableForLoginUser(org.ruoyi.service.usercenter.FeatureCodes.SOFTWARE_DIAGRAM_AI, null);
 
 
         String modelName = resolveModelName(request.getModel());
 
-        ChatModel model = buildModel(modelName);
+        ChatModel model = DrawChatModelSupport.buildModel(chatModelService, modelName);
 
         String systemPrompt = loadSystemPrompt(diagramType);
 
@@ -280,18 +415,17 @@ public class SoftwareDiagramServiceImpl implements ISoftwareDiagramService {
         String fullPrompt;
 
 
-
         if ("usecase".equals(diagramType)) {
 
             fullPrompt = systemPrompt
 
                 + "\n\n严格输出 JSON，不要 markdown 代码块，结构如下：\n" + USECASE_JSON_SCHEMA
 
+                + "\n\n要求：所有用例仅通过 actorId 关联参与者，禁止 parentId 子用例。"
+
                 + "\n\n用户需求：\n" + request.getDescription();
 
-        }
-
-        else if ("sequence".equals(diagramType)) {
+        } else if ("sequence".equals(diagramType)) {
 
             fullPrompt = systemPrompt
 
@@ -303,39 +437,62 @@ public class SoftwareDiagramServiceImpl implements ISoftwareDiagramService {
 
                 + "\n\n用户需求：\n" + request.getDescription();
 
-        }
-
-        else if ("class".equals(diagramType)) {
+        } else if ("class".equals(diagramType)) {
 
             fullPrompt = systemPrompt
 
                 + "\n\n严格输出 JSON，不要 markdown 代码块，结构如下：\n" + CLASS_JSON_SCHEMA
 
-                + "\n\n要求：classes 含 name/attributes/methods 三区；attributes 与方法以 +/-/# 表示可见性；"
+                + "\n\n要求：三格类框；英文驼峰；可见性仅用 +/-/#/~；仅 4~8 个核心类；禁止 getter/setter/log；"
 
-                + "relations.type 取值 inheritance/association/aggregation/composition/dependency；"
+                + "relations 必须设 fromMultiplicity 与 toMultiplicity（分别贴近连线两端，禁止只写一个 label）；"
 
-                + "inheritance 的 from 为子类 to 为父类；label 可标注多重性。"
+                + "电商语义：User-Order 关联；Order-OrderItem 组合(composition)；OrderItem-Product 聚合(aggregation)；Order-Payment 关联；禁止 Payment-Product 直连；"
+
+                + "type：inheritance/implementation/association/aggregation/composition/dependency；组合/聚合菱形在 from（整体）端，无箭头。"
 
                 + "\n\n用户需求：\n" + request.getDescription();
 
-        }
-
-        else if ("activity".equals(diagramType)) {
+        } else if ("activity".equals(diagramType)) {
 
             fullPrompt = systemPrompt
 
                 + "\n\n严格输出 JSON，不要 markdown 代码块，结构如下：\n" + ACTIVITY_JSON_SCHEMA
 
-                + "\n\n要求：nodes.kind 取值 start/end/activity/decision；必须有 start 与 end；"
+                + "\n\n要求：仅输出 nodes + flows，禁止 swimlanes/lane；单一用户视角，自上而下主流程；"
 
-                + "flows 按流程顺序连接；decision 的分支 label 用 [是]/[否] 等。"
+                + "全图只能 1 个 start 与 1 个 end（kind=end 牛眼终止符）；"
+
+                + "nodes.kind 取值 start/end/activity/decision；必须有 start 与 end；"
+
+                + "decision 为菱形判断，分支条件写在 flows.label（[是]/[否]/[查看]/[操作]），禁止把条件做成活动节点；"
+
+                + "分支布局：[是] 沿中轴向下，[否] 向右，[查看]/[查询] 向左，[操作]/[办理] 向右，禁止成功路径画到左侧；"
+
+                + "语义硬约束：[否] 只能连错误提示活动，禁止连办理/更新主干；更新/办理后须「是否成功?」再分成功/失败，禁止更新直连提示错误；"
+
+                + "禁止「角色类型?」及 [教师]/[管理员]/[普通用户] 多角色三分支；"
+
+                + "分支合流用 kind=decision 且 label=合流 的 merge 菱形，禁止 fork/join 与多角色泳道；"
+
+                + "参照示例：登录→验证→功能选择→两次合流→end 牛眼终止。"
 
                 + "\n\n用户需求：\n" + request.getDescription();
 
-        }
+        } else if ("architecture".equals(diagramType)) {
 
-        else {
+            fullPrompt = systemPrompt
+
+                + "\n\n严格输出 JSON，不要 markdown 代码块，结构如下：\n" + ARCHITECTURE_JSON_SCHEMA
+
+                + "\n\n要求：仅 layers+items+connections，禁止根级 nodes/edges；items 不得为层名；"
+                + "固定四层：表示层/业务逻辑层/数据访问层/基础设施与数据层；connections 禁止 label；"
+                + "覆盖 前端→Controller→Service→Mapper→MySQL/Redis 主链路；"
+                + "禁止 Docker/Kubernetes/ELK/Prometheus/Grafana 等运维监控组件；不要 color 与坐标字段。"
+
+                + "\n\n用户需求：\n" + request.getDescription();
+
+        } else {
 
             String shapeHint = SHAPE_HINTS.getOrDefault(diagramType, "节点 shape 可用 rect/ellipse/diamond/circle。");
 
@@ -359,8 +516,7 @@ public class SoftwareDiagramServiceImpl implements ISoftwareDiagramService {
 
             diagramType, blankToDefault(request.getStyle(), "professional"), SoftwareDiagramTypes.promptCode(diagramType), modelName);
 
-        String raw = model.chat(fullPrompt);
-
+        String raw = DrawChatModelSupport.chat(model, fullPrompt);
 
 
         String content;
@@ -369,34 +525,31 @@ public class SoftwareDiagramServiceImpl implements ISoftwareDiagramService {
 
             content = extractUseCaseJson(raw);
 
-        }
-
-        else if ("sequence".equals(diagramType)) {
+        } else if ("sequence".equals(diagramType)) {
 
             content = extractSequenceJson(raw);
 
-        }
-
-        else if ("class".equals(diagramType)) {
+        } else if ("class".equals(diagramType)) {
 
             content = extractClassJson(raw);
 
-        }
-
-        else if ("activity".equals(diagramType)) {
+        } else if ("activity".equals(diagramType)) {
 
             content = extractActivityJson(raw);
 
-        }
+        } else if ("architecture".equals(diagramType)) {
 
-        else {
+            content = extractArchitectureJson(raw);
+
+        } else {
 
             content = extractGraphJson(raw);
 
         }
 
-
-
+        log.info("生成软件工程图完成, type={}, style={}, promptCode={}, model={}, content={}",
+            diagramType, blankToDefault(request.getStyle(), "professional"), SoftwareDiagramTypes.promptCode(diagramType), modelName, content);
+        featureCoinService.chargeForLoginUser(org.ruoyi.service.usercenter.FeatureCodes.SOFTWARE_DIAGRAM_AI, null);
         return SoftwareDiagramResponse.builder()
 
             .mermaid(content)
@@ -406,7 +559,6 @@ public class SoftwareDiagramServiceImpl implements ISoftwareDiagramService {
             .build();
 
     }
-
 
 
     private static String buildStyleHint(String style) {
@@ -420,10 +572,11 @@ public class SoftwareDiagramServiceImpl implements ISoftwareDiagramService {
                 """;
         }
         return """
-            【专业风格】请按经典 UML / 教材 / 课程作业规范输出：
-            - 术语标准（参与者、用例、类名、可见性 +/-/#）
-            - 结构完整、关系标注规范（多重性、角色名）
-            - 命名偏学术与业务规范，适合论文与实验报告插图
+            【专业风格】请按毕业论文 UML 类图规范输出：
+            - 类名/属性/方法英文驼峰，可见性仅用 +/-/#/~
+            - 局部模块 4~8 类，剔除 getter/setter/toString/log
+            - 泛化=实线空心三角，实现=虚线空心三角，依赖=虚线开放箭头
+            - 关联/聚合/组合标注多重性（1、*、1..*）
             """;
     }
 
@@ -448,7 +601,6 @@ public class SoftwareDiagramServiceImpl implements ISoftwareDiagramService {
     }
 
 
-
     private String extractUseCaseJson(String raw) {
 
         JsonNode root = parseJson(raw);
@@ -469,10 +621,104 @@ public class SoftwareDiagramServiceImpl implements ISoftwareDiagramService {
 
         }
 
+        flattenUseCases((ObjectNode) root);
+
         return writeJson(root);
 
     }
 
+
+    /**
+     * 去掉 parentId，将子用例提升为参与者下的一级用例
+     */
+    private void flattenUseCases(ObjectNode root) {
+
+        JsonNode useCases = root.path("useCases");
+
+        if (!useCases.isArray()) {
+
+            return;
+
+        }
+
+        Map<String, JsonNode> byId = new HashMap<>();
+
+        for (JsonNode uc : useCases) {
+
+            String id = uc.path("id").asText(null);
+
+            if (StringUtils.isNotBlank(id)) {
+
+                byId.put(id, uc);
+
+            }
+
+        }
+
+        ArrayNode flat = objectMapper.createArrayNode();
+
+        for (JsonNode uc : useCases) {
+
+            ObjectNode copy = uc.deepCopy();
+
+            if (copy.hasNonNull("parentId")) {
+
+                String actorId = resolveActorIdForUseCase(copy, byId);
+
+                if (StringUtils.isNotBlank(actorId)) {
+
+                    copy.put("actorId", actorId);
+
+                }
+
+                copy.remove("parentId");
+
+            }
+
+            flat.add(copy);
+
+        }
+
+        root.set("useCases", flat);
+
+    }
+
+
+    private String resolveActorIdForUseCase(ObjectNode uc, Map<String, JsonNode> byId) {
+
+        if (uc.hasNonNull("actorId")) {
+
+            return uc.get("actorId").asText();
+
+        }
+
+        String parentId = uc.path("parentId").asText(null);
+
+        int guard = 0;
+
+        while (StringUtils.isNotBlank(parentId) && guard++ < 20) {
+
+            JsonNode parent = byId.get(parentId);
+
+            if (parent == null) {
+
+                break;
+
+            }
+
+            if (parent.hasNonNull("actorId")) {
+
+                return parent.get("actorId").asText();
+
+            }
+
+            parentId = parent.path("parentId").asText(null);
+
+        }
+
+        return null;
+
+    }
 
 
     private String extractSequenceJson(String raw) {
@@ -500,7 +746,6 @@ public class SoftwareDiagramServiceImpl implements ISoftwareDiagramService {
     }
 
 
-
     private String extractClassJson(String raw) {
 
         JsonNode root = parseJson(raw);
@@ -526,10 +771,52 @@ public class SoftwareDiagramServiceImpl implements ISoftwareDiagramService {
     }
 
 
+    private String extractArchitectureJson(String raw) {
+
+        JsonNode root = parseJson(raw);
+
+        JsonNode layers = root.path("layers");
+
+        if (layers.isArray() && !layers.isEmpty()) {
+
+            return writeJson(root);
+
+        }
+
+        JsonNode nodes = root.path("nodes");
+
+        if (nodes.isArray() && !nodes.isEmpty()) {
+
+            return writeJson(root);
+
+        }
+
+        throw new ServiceException("AI 返回格式错误：缺少 layers 或 nodes");
+
+    }
+
 
     private String extractActivityJson(String raw) {
 
         JsonNode root = parseJson(raw);
+
+        if (root.isArray()) {
+
+            if (root.size() == 1 && root.get(0).isObject()) {
+
+                root = root.get(0);
+
+            } else {
+
+                ObjectNode wrapper = objectMapper.createObjectNode();
+
+                wrapper.set("nodes", root);
+
+                root = wrapper;
+
+            }
+
+        }
 
         ObjectNode rootObj = unwrapActivityRoot(root);
 
@@ -554,6 +841,26 @@ public class SoftwareDiagramServiceImpl implements ISoftwareDiagramService {
             rootObj.set("nodes", rootObj.path("steps"));
 
             nodes = rootObj.path("nodes");
+
+        }
+
+        if (!nodes.isArray() || nodes.isEmpty()) {
+
+            for (String field : new String[]{"elements", "states", "actions", "nodeList"}) {
+
+                JsonNode alt = rootObj.path(field);
+
+                if (alt.isArray() && !alt.isEmpty()) {
+
+                    rootObj.set("nodes", alt);
+
+                    nodes = alt;
+
+                    break;
+
+                }
+
+            }
 
         }
 
@@ -586,6 +893,7 @@ public class SoftwareDiagramServiceImpl implements ISoftwareDiagramService {
         }
 
         normalizeActivityNodes(rootObj);
+        stripActivitySwimlanes(rootObj);
 
         JsonNode flows = rootObj.path("flows");
 
@@ -597,11 +905,19 @@ public class SoftwareDiagramServiceImpl implements ISoftwareDiagramService {
 
                 rootObj.set("flows", convertEdgesToFlows(edges));
 
-            }
-
-            else {
+            } else {
 
                 rootObj.set("flows", objectMapper.createArrayNode());
+
+            }
+
+        } else if (flows.isEmpty()) {
+
+            ArrayNode seqFlows = buildSequentialActivityFlows(rootObj.path("nodes"));
+
+            if (seqFlows != null && !seqFlows.isEmpty()) {
+
+                rootObj.set("flows", seqFlows);
 
             }
 
@@ -610,7 +926,6 @@ public class SoftwareDiagramServiceImpl implements ISoftwareDiagramService {
         return writeJson(rootObj);
 
     }
-
 
 
     private ObjectNode unwrapActivityRoot(JsonNode root) {
@@ -636,7 +951,6 @@ public class SoftwareDiagramServiceImpl implements ISoftwareDiagramService {
     }
 
 
-
     private JsonNode firstObject(ObjectNode obj, String... fields) {
 
         for (String field : fields) {
@@ -656,7 +970,6 @@ public class SoftwareDiagramServiceImpl implements ISoftwareDiagramService {
     }
 
 
-
     private JsonNode firstArray(ObjectNode obj, String... fields) {
 
         for (String field : fields) {
@@ -674,7 +987,6 @@ public class SoftwareDiagramServiceImpl implements ISoftwareDiagramService {
         return null;
 
     }
-
 
 
     private ArrayNode objectMapToNodesArray(JsonNode mapNode) {
@@ -708,7 +1020,6 @@ public class SoftwareDiagramServiceImpl implements ISoftwareDiagramService {
         return nodes;
 
     }
-
 
 
     private ArrayNode flattenSwimlaneNodes(ObjectNode rootObj) {
@@ -752,6 +1063,44 @@ public class SoftwareDiagramServiceImpl implements ISoftwareDiagramService {
     }
 
 
+    private void stripActivitySwimlanes(ObjectNode rootObj) {
+
+        rootObj.remove("swimlanes");
+
+        rootObj.remove("lanes");
+
+        rootObj.remove("partitions");
+
+        JsonNode nodes = rootObj.path("nodes");
+
+        if (!nodes.isArray()) {
+
+            return;
+
+        }
+
+        for (JsonNode node : nodes) {
+
+            if (!node.isObject()) {
+
+                continue;
+
+            }
+
+            ObjectNode obj = (ObjectNode) node;
+
+            obj.remove("lane");
+
+            obj.remove("swimlane");
+
+            obj.remove("partition");
+
+            obj.remove("laneId");
+
+        }
+
+    }
+
 
     private void normalizeActivityNodes(ObjectNode rootObj) {
 
@@ -779,6 +1128,12 @@ public class SoftwareDiagramServiceImpl implements ISoftwareDiagramService {
 
             }
 
+            if (!obj.has("kind") && obj.has("nodeType")) {
+
+                obj.set("kind", obj.get("nodeType"));
+
+            }
+
             if (!obj.has("kind") && obj.has("shape")) {
 
                 String shape = obj.get("shape").asText("").toLowerCase();
@@ -787,9 +1142,7 @@ public class SoftwareDiagramServiceImpl implements ISoftwareDiagramService {
 
                     obj.put("kind", "decision");
 
-                }
-
-                else if ("circle".equals(shape) || "ellipse".equals(shape)) {
+                } else if ("circle".equals(shape) || "ellipse".equals(shape)) {
 
                     String label = obj.path("label").asText("").toLowerCase();
 
@@ -797,9 +1150,7 @@ public class SoftwareDiagramServiceImpl implements ISoftwareDiagramService {
 
                         obj.put("kind", "end");
 
-                    }
-
-                    else {
+                    } else {
 
                         obj.put("kind", "start");
 
@@ -809,10 +1160,132 @@ public class SoftwareDiagramServiceImpl implements ISoftwareDiagramService {
 
             }
 
+            if (obj.has("kind")) {
+
+                normalizeActivityKindField(obj);
+
+            }
+
         }
 
     }
 
+
+    private void normalizeActivityKindField(ObjectNode obj) {
+
+        String kind = obj.get("kind").asText("").trim().toLowerCase();
+
+        if ("action".equals(kind) || "task".equals(kind) || "step".equals(kind) || "process".equals(kind)) {
+
+            obj.put("kind", "activity");
+
+        } else if ("condition".equals(kind) || "branch".equals(kind) || "gateway".equals(kind)) {
+
+            obj.put("kind", "decision");
+
+        } else if ("fork".equals(kind) || "parallel".equals(kind)) {
+
+            obj.put("kind", "fork");
+
+        } else if ("join".equals(kind) || "synchronizer".equals(kind) || "同步".equals(kind)) {
+
+            obj.put("kind", "join");
+
+        } else if ("merge".equals(kind) || "汇合".equals(kind) || "合流".equals(kind)) {
+
+            obj.put("kind", "decision");
+
+            if (!obj.has("label") || StringUtils.isBlank(obj.path("label").asText())) {
+
+                obj.put("label", "合流");
+
+            }
+
+        } else if ("initial".equals(kind) || "initialnode".equals(kind)) {
+
+            obj.put("kind", "start");
+
+        } else if ("final".equals(kind) || "finalnode".equals(kind) || "terminate".equals(kind) || "termination".equals(kind)) {
+
+            obj.put("kind", "end");
+
+        }
+
+    }
+
+
+    private ArrayNode buildSequentialActivityFlows(JsonNode nodes) {
+
+        if (!nodes.isArray() || nodes.size() < 2) {
+
+            return null;
+
+        }
+
+        ArrayNode flows = objectMapper.createArrayNode();
+
+        for (int i = 0; i < nodes.size() - 1; i++) {
+
+            JsonNode fromNode = nodes.get(i);
+
+            JsonNode toNode = nodes.get(i + 1);
+
+            if (!fromNode.isObject() || !toNode.isObject()) {
+
+                continue;
+
+            }
+
+            String fromId = activityNodeIdText(fromNode, i);
+
+            String toId = activityNodeIdText(toNode, i + 1);
+
+            if (StringUtils.isBlank(fromId) || StringUtils.isBlank(toId)) {
+
+                continue;
+
+            }
+
+            ObjectNode flow = objectMapper.createObjectNode();
+
+            flow.put("id", "f" + (i + 1));
+
+            flow.put("from", fromId);
+
+            flow.put("to", toId);
+
+            flows.add(flow);
+
+        }
+
+        return flows.isEmpty() ? null : flows;
+
+    }
+
+
+    private String activityNodeIdText(JsonNode node, int index) {
+
+        if (node.has("id")) {
+
+            return node.get("id").asText();
+
+        }
+
+        if (node.has("key")) {
+
+            return node.get("key").asText();
+
+        }
+
+        if (node.has("code")) {
+
+            return node.get("code").asText();
+
+        }
+
+        return "n" + (index + 1);
+
+    }
 
 
     private ArrayNode convertEdgesToFlows(JsonNode edges) {
@@ -862,7 +1335,6 @@ public class SoftwareDiagramServiceImpl implements ISoftwareDiagramService {
     }
 
 
-
     private String edgeText(JsonNode edge, String... fields) {
 
         for (String field : fields) {
@@ -878,7 +1350,6 @@ public class SoftwareDiagramServiceImpl implements ISoftwareDiagramService {
         return "";
 
     }
-
 
 
     private String extractGraphJson(String raw) {
@@ -906,23 +1377,19 @@ public class SoftwareDiagramServiceImpl implements ISoftwareDiagramService {
     }
 
 
-
     private String writeJson(JsonNode root) {
 
         try {
 
             return objectMapper.writeValueAsString(root);
 
-        }
-
-        catch (Exception e) {
+        } catch (Exception e) {
 
             throw new ServiceException("AI 返回格式错误，未能解析 JSON");
 
         }
 
     }
-
 
 
     private JsonNode parseJson(String raw) {
@@ -941,9 +1408,7 @@ public class SoftwareDiagramServiceImpl implements ISoftwareDiagramService {
 
             candidate = m.group(1).trim();
 
-        }
-
-        else if (candidate.contains("```")) {
+        } else if (candidate.contains("```")) {
 
             int start = candidate.indexOf("```");
 
@@ -963,11 +1428,19 @@ public class SoftwareDiagramServiceImpl implements ISoftwareDiagramService {
 
         }
 
+        int arrStart = candidate.indexOf("[");
+
+        int arrEnd = candidate.lastIndexOf("]");
+
         int jsonStart = candidate.indexOf("{");
 
         int jsonEnd = candidate.lastIndexOf("}");
 
-        if (jsonStart >= 0 && jsonEnd > jsonStart) {
+        if (arrStart >= 0 && (jsonStart < 0 || arrStart < jsonStart) && arrEnd > arrStart) {
+
+            candidate = candidate.substring(arrStart, arrEnd + 1);
+
+        } else if (jsonStart >= 0 && jsonEnd > jsonStart) {
 
             candidate = candidate.substring(jsonStart, jsonEnd + 1);
 
@@ -977,16 +1450,13 @@ public class SoftwareDiagramServiceImpl implements ISoftwareDiagramService {
 
             return objectMapper.readTree(candidate);
 
-        }
-
-        catch (Exception e) {
+        } catch (Exception e) {
 
             throw new ServiceException("AI 返回格式错误，未能解析 JSON");
 
         }
 
     }
-
 
 
     private String resolveModelName(String requestModel) {
@@ -1009,29 +1479,6 @@ public class SoftwareDiagramServiceImpl implements ISoftwareDiagramService {
 
     }
 
-
-
-    private ChatModel buildModel(String modelName) {
-
-        ChatModelVo modelVo = chatModelService.selectModelByName(modelName);
-
-        if (modelVo == null) {
-
-            throw new ServiceException("模型不存在: " + modelName);
-
-        }
-
-        return OpenAiChatModel.builder()
-
-            .baseUrl(modelVo.getApiHost())
-
-            .apiKey(modelVo.getApiKey())
-
-            .modelName(modelVo.getModelName())
-
-            .build();
-
-    }
 
 }
 

@@ -16,6 +16,7 @@ import me.zhyd.oauth.utils.AuthStateUtils;
 import org.ruoyi.common.core.constant.SystemConstants;
 import org.ruoyi.common.core.domain.R;
 import org.ruoyi.common.core.domain.model.LoginBody;
+import org.ruoyi.common.core.domain.model.FrontRegisterBody;
 import org.ruoyi.common.core.domain.model.RegisterBody;
 import org.ruoyi.common.core.domain.model.SocialLoginBody;
 import org.ruoyi.common.core.utils.*;
@@ -59,6 +60,7 @@ public class AuthController {
     private final SocialProperties socialProperties;
     private final SysLoginService loginService;
     private final SysRegisterService registerService;
+    private final FrontRegisterService frontRegisterService;
     private final ISysConfigService configService;
     private final ISysTenantService tenantService;
     private final ISysSocialService socialUserService;
@@ -188,6 +190,15 @@ public class AuthController {
             return R.fail("当前系统没有开启注册功能！");
         }
         registerService.register(user);
+        return R.ok();
+    }
+
+    /**
+     * 前台用户注册（邮箱 / 手机号，user_type = app_user）
+     */
+    @PostMapping("/front/register")
+    public R<Void> frontRegister(@Validated @RequestBody FrontRegisterBody body) {
+        frontRegisterService.register(body);
         return R.ok();
     }
 

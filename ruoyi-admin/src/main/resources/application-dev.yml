@@ -130,21 +130,21 @@ redisson:
     # 发布和订阅连接池大小
     subscriptionConnectionPoolSize: 50
 
---- # mail 邮件发送
+--- # mail 邮件发送（QQ 邮箱）
 mail:
-  enabled: false
-  host: smtp.163.com
+  enabled: true
+  host: smtp.qq.com
   port: 465
   # 是否需要用户名密码验证
   auth: true
   # 发送方，遵循RFC-822标准
-  from: xxx@163.com
-  # 用户名（注意：如果使用foxmail邮箱，此处user为qq号）
-  user: xxx@163.com
-  # 密码（注意，某些邮箱需要为SMTP服务单独设置密码，详情查看相关帮助）
-  pass: xxxxxxxxxx
-  # 使用 STARTTLS安全连接，STARTTLS是对纯文本通信协议的扩展。
-  starttlsEnable: true
+  from: 845351116@qq.com
+  # QQ 邮箱填完整邮箱地址
+  user: 845351116@qq.com
+  # QQ 邮箱须使用 SMTP 授权码（非 QQ 登录密码），在 QQ 邮箱 → 设置 → 账户 → POP3/SMTP 中开启并生成
+  pass: xbnueqhuzwdzbcai
+  # 465 端口使用 SSL，无需 STARTTLS
+  starttlsEnable: false
   # 使用SSL安全连接
   sslEnable: true
   # SMTP超时时长，单位毫秒，缺省值不超时
@@ -268,4 +268,32 @@ justauth:
       client-secret: 1f7d08**********5b7**********29e
       redirect-uri: ${justauth.address}/social-callback?source=gitea
 
+--- # 支付宝支付（公钥模式 / 证书模式，由 sign-mode 切换）
+alipay:
+  pay:
+    enabled: true
+    # key=公钥模式（沙箱开发）  cert=证书模式（正式上线）
+    sign-mode: key
+    app-id: 你的支付宝AppId
+    private-key: |
+      -----BEGIN PRIVATE KEY-----
+      你的应用私钥PKCS8
+      -----END PRIVATE KEY-----
+    # --- 公钥模式（sign-mode: key）---
+    alipay-public-key: |
+      -----BEGIN PUBLIC KEY-----
+      支付宝公钥（不是应用公钥）
+      -----END PUBLIC KEY-----
+    # --- 证书模式（sign-mode: cert）---
+    # app-cert-path: D:/certs/appCertPublicKey.crt
+    # alipay-cert-path: D:/certs/alipayCertPublicKey.crt
+    # root-cert-path: D:/certs/alipayRootCert.crt
+    gateway-url: https://openapi-sandbox.dl.alipaydev.com/gateway.do
+    notify-url: https://你的公网域名/usercenter/wallet/alipay/notify
+    return-url: http://127.0.0.1:5173/user/wallet
+
 AGENT_ALLOWED_TABLES: ""
+
+# 课设代码模板（可选，默认使用 classpath 内嵌 template.zip）
+course-code:
+  template-dir: D:/chromedownload/code

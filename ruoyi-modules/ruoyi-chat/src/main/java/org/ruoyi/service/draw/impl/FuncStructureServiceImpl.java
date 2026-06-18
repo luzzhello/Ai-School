@@ -3,10 +3,8 @@ package org.ruoyi.service.draw.impl;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import dev.langchain4j.model.chat.ChatModel;
-import dev.langchain4j.model.openai.OpenAiChatModel;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.ruoyi.common.chat.domain.vo.chat.ChatModelVo;
 import org.ruoyi.common.chat.service.chat.IChatModelService;
 import org.ruoyi.common.core.exception.ServiceException;
 import org.ruoyi.common.core.utils.StringUtils;
@@ -17,6 +15,8 @@ import org.ruoyi.domain.dto.response.FuncStructureResponse;
 import org.ruoyi.domain.vo.chat.ChatPromptVo;
 import org.ruoyi.service.chat.IChatPromptService;
 import org.ruoyi.service.draw.IFuncStructureService;
+import org.ruoyi.service.usercenter.FeatureCodes;
+import org.ruoyi.service.usercenter.IFeatureCoinService;
 import org.springframework.stereotype.Service;
 
 import java.util.ArrayList;
@@ -43,20 +43,22 @@ public class FuncStructureServiceImpl implements IFuncStructureService {
     private final IChatPromptService chatPromptService;
     private final ErDiagramProperties erDiagramProperties;
     private final ObjectMapper objectMapper;
+    private final IFeatureCoinService featureCoinService;
 
     @Override
     public FuncStructureResponse generate(FuncStructureGenerateRequest request) {
         if (StringUtils.isBlank(request.getDescription())) {
             throw new ServiceException("系统描述不能为空");
         }
+        featureCoinService.requireAffordableForLoginUser(FeatureCodes.FUNC_STRUCTURE_AI, null);
         String modelName = resolveModelName(request.getModel());
-        ChatModel model = buildModel(modelName);
+        ChatModel model = DrawChatModelSupport.buildModel(chatModelService, modelName);
         String systemPrompt = loadSystemPrompt();
         String fullPrompt = systemPrompt + "\n\n严格输出 JSON，不要 markdown 代码块，结构如下：\n" + JSON_SCHEMA
             + "\n\n用户需求：\n" + request.getDescription();
 
         log.info("开始生成功能结构图, model={}", modelName);
-        String raw = model.chat(fullPrompt);
+        String raw = DrawChatModelSupport.chat(model, fullPrompt);
         JsonNode root = parseJson(raw);
         List<FuncStructureNodeVo> nodes = parseNodes(root.path("nodes"));
 
@@ -66,6 +68,7 @@ public class FuncStructureServiceImpl implements IFuncStructureService {
             .findFirst()
             .orElse(nodes.isEmpty() ? "" : nodes.get(0).getId());
 
+        featureCoinService.chargeForLoginUser(FeatureCodes.FUNC_STRUCTURE_AI, null);
         return FuncStructureResponse.builder()
             .nodes(nodes)
             .rootId(rootId)
@@ -99,18 +102,6 @@ public class FuncStructureServiceImpl implements IFuncStructureService {
             throw new ServiceException("未指定模型且未配置 chat.model.default-model");
         }
         return defaultModel;
-    }
-
-    private ChatModel buildModel(String modelName) {
-        ChatModelVo modelVo = chatModelService.selectModelByName(modelName);
-        if (modelVo == null) {
-            throw new ServiceException("模型不存在: " + modelName);
-        }
-        return OpenAiChatModel.builder()
-            .baseUrl(modelVo.getApiHost())
-            .apiKey(modelVo.getApiKey())
-            .modelName(modelVo.getModelName())
-            .build();
     }
 
     private JsonNode parseJson(String raw) {

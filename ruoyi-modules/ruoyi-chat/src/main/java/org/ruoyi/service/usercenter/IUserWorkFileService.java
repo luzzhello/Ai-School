@@ -15,4 +15,12 @@ public interface IUserWorkFileService {
     Long save(Long userId, WorkFileSaveRequest request);
 
     void remove(Long userId, Long fileId);
+
+    /**
+     * 物理清理超过保留期的云端作品（按更新时间，默认 3 个月）
+     *
+     * @param retainMonths 保留月数
+     * @return 删除条数
+     */
+    int cleanExpiredFiles(int retainMonths);
 }

@@ -65,6 +65,10 @@ public class PlusDataPermissionHandler {
                 currentUser = LoginHelper.getLoginUser();
                 DataPermissionHelper.setVariable("user", currentUser);
             }
+            // 未登录（如登录前补全邀请码）不做数据权限过滤
+            if (ObjectUtil.isNull(currentUser)) {
+                return where;
+            }
             // 如果是超级管理员或租户管理员，则不过滤数据
             if (LoginHelper.isSuperAdmin() || LoginHelper.isTenantAdmin()) {
                 return where;
@@ -104,6 +108,9 @@ public class PlusDataPermissionHandler {
             joinStr = " " + dataPermission.joinStr() + " ";
         }
         LoginUser user = DataPermissionHelper.getVariable("user");
+        if (ObjectUtil.isNull(user)) {
+            return StringUtils.EMPTY;
+        }
         Object defaultValue = "-1";
         NullSafeStandardEvaluationContext context = new NullSafeStandardEvaluationContext(defaultValue);
         context.addPropertyAccessor(new NullSafePropertyAccessor(context.getPropertyAccessors().get(0), defaultValue));

@@ -36,6 +36,9 @@ public class UcMembershipPlan extends BaseEntity {
 
     private String benefitsJson;
 
+    /** 前台展示 JSON：主题、标签、权益文案等 */
+    private String displayJson;
+
     private String status;
 
     private String remark;

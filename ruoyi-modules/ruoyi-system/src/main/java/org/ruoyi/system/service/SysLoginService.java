@@ -61,6 +61,7 @@ public class SysLoginService {
     private final ISysRoleService roleService;
     private final ISysDeptService deptService;
     private final ISysPostService postService;
+    private final ISysUserService userService;
     private final SysUserMapper userMapper;
 
 
@@ -155,6 +156,10 @@ public class SysLoginService {
         loginUser.setDeptId(user.getDeptId());
         loginUser.setUsername(user.getUserName());
         loginUser.setNickname(user.getNickName());
+        String inviteCode = StringUtils.isNotBlank(user.getInviteCode())
+            ? user.getInviteCode()
+            : userService.ensureInviteCode(userId);
+        loginUser.setInviteCode(inviteCode);
         loginUser.setUserType(user.getUserType());
         loginUser.setMenuPermission(permissionService.getMenuPermission(userId));
         loginUser.setRolePermission(permissionService.getRolePermission(userId));

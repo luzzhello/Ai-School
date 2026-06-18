@@ -17,6 +17,8 @@ import org.ruoyi.domain.dto.request.WordTableExportRequest;
 import org.ruoyi.domain.vo.chat.ChatPromptVo;
 import org.ruoyi.service.chat.IChatPromptService;
 import org.ruoyi.service.draw.IWordTableService;
+import org.ruoyi.service.usercenter.FeatureCodes;
+import org.ruoyi.service.usercenter.IFeatureCoinService;
 import org.springframework.stereotype.Service;
 
 import java.io.IOException;
@@ -34,10 +36,13 @@ public class WordTableServiceImpl implements IWordTableService {
     private final IChatPromptService chatPromptService;
     private final ErDiagramProperties erDiagramProperties;
     private final ObjectMapper objectMapper;
+    private final IFeatureCoinService featureCoinService;
 
     @Override
     public void exportWord(WordTableExportRequest request, HttpServletResponse response) {
         validateRequest(request);
+        String featureCode = isAiMode(request) ? FeatureCodes.WORD_TABLE_AI : FeatureCodes.WORD_TABLE_MANUAL;
+        featureCoinService.requireAffordableForLoginUser(featureCode, null);
         try {
             int colCount = clamp(request.getColCount(), 1, 12);
             int rowCount = clamp(request.getRowCount(), 1, 50);
@@ -63,6 +68,7 @@ public class WordTableServiceImpl implements IWordTableService {
             FileUtils.setAttachmentResponseHeader(response, filename);
             response.getOutputStream().write(bytes);
             response.getOutputStream().flush();
+            featureCoinService.chargeForLoginUser(featureCode, null);
         } catch (ServiceException e) {
             throw e;
         } catch (IOException e) {

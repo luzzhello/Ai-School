@@ -108,6 +108,11 @@ public class LoginUser implements Serializable {
     private String nickname;
 
     /**
+     * 邀请码
+     */
+    private String inviteCode;
+
+    /**
      * 角色对象
      */
     private List<RoleDTO> roles;

@@ -26,10 +26,13 @@ final class ChenErLayoutBuilder {
     private static final double LEFT_X = 80;
     private static final double MID_X = 400;
     private static final double RIGHT_X = 760;
-    private static final double REL_LEFT_X = 220;
-    private static final double REL_RIGHT_X = 620;
+    /** 左列实体与关系菱形之间的固定竖带 */
+    private static final double REL_LEFT_X = LEFT_X + ENTITY_W + 28;
+    /** 右列关系菱形与右列实体之间的固定竖带 */
+    private static final double REL_RIGHT_X = RIGHT_X - REL_SIZE - 28;
     private static final double START_Y = 90;
     private static final double MID_GAP_Y = Math.max(130, ENTITY_H + REL_SIZE + 40);
+    private static final double REL_STACK_GAP = 12;
     private static final double SHAPE_MIN_GAP = 10;
     private static final double ATTR_RADIUS = 130;
     private static final double ATTR_GAP = 24;
@@ -51,7 +54,31 @@ final class ChenErLayoutBuilder {
     record ChenDiagram(List<ErNodeVo> nodes, List<ErEdgeVo> edges) {
     }
 
+    record ErDiagramBundle(ChenDiagram overview, List<ChenDiagram> attributeDiagrams, List<String> entityNames) {
+    }
+
+    /** 总体 E-R 图 + 各实体属性图 */
+    static ErDiagramBundle buildBundle(List<EntityDef> entities, List<RelationshipDef> relationships) {
+        ChenDiagram overview = buildOverview(entities, relationships);
+        List<ChenDiagram> attrDiagrams = new ArrayList<>();
+        List<String> entityNames = new ArrayList<>();
+        int idx = 0;
+        for (EntityDef entity : entities) {
+            if (entity.attributes() == null || entity.attributes().isEmpty()) {
+                continue;
+            }
+            attrDiagrams.add(buildAttributeDiagram(entity, idx++));
+            entityNames.add(entity.name());
+        }
+        return new ErDiagramBundle(overview, attrDiagrams, entityNames);
+    }
+
     static ChenDiagram build(List<EntityDef> entities, List<RelationshipDef> relationships) {
+        return buildOverview(entities, relationships);
+    }
+
+    /** 总体 E-R 图：左用户 · 中业务实体 · 右管理员 + 关系菱形（不含属性） */
+    static ChenDiagram buildOverview(List<EntityDef> entities, List<RelationshipDef> relationships) {
         List<ErNodeVo> nodes = new ArrayList<>();
         List<ErEdgeVo> edges = new ArrayList<>();
         Map<String, String> entityNameToId = new LinkedHashMap<>();
@@ -69,7 +96,7 @@ final class ChenErLayoutBuilder {
             nodes.add(entityNode);
         }
 
-        String leftId = detectLeftEntityId(entities, entityNameToId);
+        String leftId = detectLeftEntityId(entities, entityNameToId, relationships);
         String rightId = detectRightEntityId(entities, entityNameToId, leftId);
         List<String> middleIds = new ArrayList<>();
         for (String id : entityNodes.keySet()) {
@@ -77,6 +104,7 @@ final class ChenErLayoutBuilder {
                 middleIds.add(id);
             }
         }
+        middleIds.sort((a, b) -> entityNodes.get(a).getLabel().compareTo(entityNodes.get(b).getLabel()));
 
         double centerY = START_Y + Math.max(0, middleIds.size() - 1) * MID_GAP_Y / 2.0;
         if (leftId != null) {
@@ -90,10 +118,12 @@ final class ChenErLayoutBuilder {
         }
 
         Map<String, Integer> pairStack = new HashMap<>();
-        double bottomRelY = START_Y + middleIds.size() * MID_GAP_Y + 36;
+        double bottomRelY = START_Y + middleIds.size() * MID_GAP_Y + 48;
         int relIndex = 0;
 
-        for (RelationshipDef rel : relationships) {
+        List<RelationshipDef> normalRels = relationships;
+
+        for (RelationshipDef rel : normalRels) {
             String aId = entityNameToId.get(normalize(rel.entityA()));
             String bId = entityNameToId.get(normalize(rel.entityB()));
             if (aId == null || bId == null) {
@@ -105,58 +135,96 @@ final class ChenErLayoutBuilder {
             String cardFrom = blankToDefault(rel.cardA(), "1");
             String cardTo = blankToDefault(rel.cardB(), "n");
 
-            double relX;
-            double relY;
+            double relX = 0;
+            double relY = 0;
+            boolean placed = false;
 
             if (leftId != null && rightId != null && isPair(fromId, toId, leftId, rightId)) {
-                relX = (LEFT_X + RIGHT_X) / 2 - REL_SIZE / 2;
+                relX = (LEFT_X + RIGHT_X) / 2.0 - REL_SIZE / 2;
                 relY = bottomRelY;
-                bottomRelY += REL_SIZE + 20;
+                bottomRelY += REL_SIZE + 24;
+                placed = true;
             }
             else if (leftId != null && involves(middleIds, toId) && fromId.equals(leftId)) {
                 int stack = pairStack.merge(leftId + "|" + toId, 1, Integer::sum) - 1;
-                relX = REL_LEFT_X - REL_SIZE / 2 - stack * (REL_SIZE + 10);
-                relY = sideRelationshipY(entityNodes.get(toId).getY(), stack);
+                relX = REL_LEFT_X + stack * (REL_SIZE + REL_STACK_GAP);
+                relY = alignRelationshipY(entityNodes.get(toId).getY());
+                placed = true;
             }
             else if (leftId != null && involves(middleIds, fromId) && toId.equals(leftId)) {
                 int stack = pairStack.merge(leftId + "|" + fromId, 1, Integer::sum) - 1;
-                relX = REL_LEFT_X - REL_SIZE / 2 - stack * (REL_SIZE + 10);
-                relY = sideRelationshipY(entityNodes.get(fromId).getY(), stack);
+                relX = REL_LEFT_X + stack * (REL_SIZE + REL_STACK_GAP);
+                relY = alignRelationshipY(entityNodes.get(fromId).getY());
                 fromId = bId;
                 toId = aId;
                 cardFrom = blankToDefault(rel.cardB(), "1");
                 cardTo = blankToDefault(rel.cardA(), "n");
+                placed = true;
             }
             else if (rightId != null && involves(middleIds, fromId) && toId.equals(rightId)) {
                 int stack = pairStack.merge(fromId + "|" + rightId, 1, Integer::sum) - 1;
-                relX = REL_RIGHT_X - REL_SIZE / 2 + stack * (REL_SIZE + 10);
-                relY = sideRelationshipY(entityNodes.get(fromId).getY(), stack);
+                relX = REL_RIGHT_X - stack * (REL_SIZE + REL_STACK_GAP);
+                relY = alignRelationshipY(entityNodes.get(fromId).getY());
+                placed = true;
             }
             else if (rightId != null && involves(middleIds, toId) && fromId.equals(rightId)) {
                 int stack = pairStack.merge(toId + "|" + rightId, 1, Integer::sum) - 1;
-                relX = REL_RIGHT_X - REL_SIZE / 2 + stack * (REL_SIZE + 10);
-                relY = sideRelationshipY(entityNodes.get(toId).getY(), stack);
+                relX = REL_RIGHT_X - stack * (REL_SIZE + REL_STACK_GAP);
+                relY = alignRelationshipY(entityNodes.get(toId).getY());
                 fromId = bId;
                 toId = aId;
                 cardFrom = blankToDefault(rel.cardB(), "1");
                 cardTo = blankToDefault(rel.cardA(), "n");
+                placed = true;
             }
-            else {
+            else if (leftId != null && rightId != null
+                && ((fromId.equals(leftId) && toId.equals(rightId)) || (fromId.equals(rightId) && toId.equals(leftId)))) {
+                relX = (LEFT_X + RIGHT_X) / 2.0 - REL_SIZE / 2;
+                relY = bottomRelY;
+                bottomRelY += REL_SIZE + 24;
+                if (fromId.equals(rightId)) {
+                    fromId = bId;
+                    toId = aId;
+                    cardFrom = blankToDefault(rel.cardB(), "1");
+                    cardTo = blankToDefault(rel.cardA(), "n");
+                }
+                placed = true;
+            }
+            else if (involves(middleIds, fromId) && involves(middleIds, toId)) {
+                ErNodeVo fromNode = entityNodes.get(fromId);
+                ErNodeVo toNode = entityNodes.get(toId);
+                String pairKey = fromId.compareTo(toId) <= 0 ? fromId + "|" + toId : toId + "|" + fromId;
+                int stack = pairStack.merge(pairKey, 1, Integer::sum) - 1;
+                relX = MID_X + ENTITY_W / 2.0 - REL_SIZE / 2 + stack * (REL_SIZE + REL_STACK_GAP);
+                relY = (rowCenterY(fromNode) + rowCenterY(toNode)) / 2.0 - REL_SIZE / 2;
+                placed = true;
+            }
+            else if (leftId != null && rightId != null
+                && (fromId.equals(leftId) || toId.equals(leftId))
+                && (fromId.equals(rightId) || toId.equals(rightId))) {
+                relX = (REL_LEFT_X + REL_RIGHT_X) / 2.0 - REL_SIZE / 2;
+                ErNodeVo leftNode = entityNodes.get(leftId);
+                ErNodeVo rightNode = entityNodes.get(rightId);
+                relY = (rowCenterY(leftNode) + rowCenterY(rightNode)) / 2.0 - REL_SIZE / 2;
+                if (toId.equals(leftId)) {
+                    fromId = bId;
+                    toId = aId;
+                    cardFrom = blankToDefault(rel.cardB(), "1");
+                    cardTo = blankToDefault(rel.cardA(), "n");
+                }
+                placed = true;
+            }
+
+            if (!placed) {
                 ErNodeVo fromNode = entityNodes.get(fromId);
                 ErNodeVo toNode = entityNodes.get(toId);
                 if (fromNode == null || toNode == null) {
                     continue;
                 }
-                boolean bothMiddle = involves(middleIds, fromId) && involves(middleIds, toId);
                 String pairKey = fromId.compareTo(toId) <= 0 ? fromId + "|" + toId : toId + "|" + fromId;
                 int stack = pairStack.merge(pairKey, 1, Integer::sum) - 1;
-                if (bothMiddle) {
-                    relX = MID_X + ENTITY_W / 2 - REL_SIZE / 2 + stack * (REL_SIZE + 12);
-                }
-                else {
-                    relX = (fromNode.getX() + toNode.getX()) / 2 - REL_SIZE / 2 + stack * (REL_SIZE + 12);
-                }
-                relY = (rowCenterY(fromNode) + rowCenterY(toNode)) / 2 - REL_SIZE / 2 + stack * (REL_SIZE + 12);
+                relX = (fromNode.getX() + toNode.getX()) / 2.0 - REL_SIZE / 2 + stack * (REL_SIZE + REL_STACK_GAP);
+                relY = (rowCenterY(fromNode) + rowCenterY(toNode)) / 2.0 - REL_SIZE / 2;
             }
 
             String relId = "r_" + sanitize(rel.name()) + "_" + relIndex++;
@@ -172,28 +240,42 @@ final class ChenErLayoutBuilder {
             edges.add(buildEdge("l_" + relId + "_b", relId, toId, cardTo));
         }
 
-        for (ErNodeVo entityNode : entityNodes.values()) {
-            EntityDef def = findEntityDef(entities, entityNode.getLabel());
-            if (def != null) {
-                layoutAttributesArc(entityNode.getId(), entityNode.getX(), entityNode.getY(),
-                    def.attributes(), nodes, edges);
-            }
-        }
-
         resolveEntityRelationshipOverlaps(nodes);
 
         return new ChenDiagram(nodes, edges);
     }
 
-    private static double rowCenterY(ErNodeVo node) {
-        return node.getY() + ENTITY_H / 2;
+    /** 单实体属性图：实体居中偏下，属性椭圆扇形向上展开（教材图 4.7） */
+    static ChenDiagram buildAttributeDiagram(EntityDef entity, int index) {
+        List<ErNodeVo> nodes = new ArrayList<>();
+        List<ErEdgeVo> edges = new ArrayList<>();
+
+        String entityId = "e_attr_" + sanitize(entity.name()) + "_" + index;
+        double entityX = 360;
+        double entityY = 340;
+
+        ErNodeVo entityNode = new ErNodeVo();
+        entityNode.setId(entityId);
+        entityNode.setLabel(entity.name());
+        entityNode.setType("entity");
+        entityNode.setX(entityX);
+        entityNode.setY(entityY);
+        nodes.add(entityNode);
+
+        List<String> attrs = entity.attributes();
+        if (attrs != null && !attrs.isEmpty()) {
+            layoutAttributesArc(entityId, entityX, entityY, attrs, nodes, edges);
+        }
+
+        return new ChenDiagram(nodes, edges);
     }
 
-    private static double sideRelationshipY(double entityY, int stack) {
-        if (stack % 2 == 0) {
-            return entityY - REL_SIZE - SHAPE_MIN_GAP;
-        }
-        return entityY + ENTITY_H + SHAPE_MIN_GAP;
+    private static double alignRelationshipY(double entityY) {
+        return entityY + ENTITY_H / 2.0 - REL_SIZE / 2.0;
+    }
+
+    private static double rowCenterY(ErNodeVo node) {
+        return node.getY() + ENTITY_H / 2;
     }
 
     private record Rect(double x, double y, double w, double h) {
@@ -229,14 +311,12 @@ final class ChenErLayoutBuilder {
         for (ErNodeVo rel : relNodes) {
             double x = rel.getX();
             double y = rel.getY();
-            for (int attempt = 0; attempt < 48; attempt++) {
+            for (int attempt = 0; attempt < 24; attempt++) {
                 Rect rect = new Rect(x, y, REL_SIZE, REL_SIZE);
                 boolean moved = false;
                 for (Rect er : entityRects) {
                     if (rectsOverlap(rect, er, SHAPE_MIN_GAP)) {
-                        double below = er.y + er.h + SHAPE_MIN_GAP;
-                        double above = er.y - rect.h - SHAPE_MIN_GAP;
-                        y = Math.abs(y - above) <= Math.abs(below - y) ? above : below;
+                        y = er.y + er.h + SHAPE_MIN_GAP;
                         rect = new Rect(x, y, REL_SIZE, REL_SIZE);
                         moved = true;
                     }
@@ -266,13 +346,46 @@ final class ChenErLayoutBuilder {
         return (a.equals(left) && b.equals(right)) || (a.equals(right) && b.equals(left));
     }
 
-    private static String detectLeftEntityId(List<EntityDef> entities, Map<String, String> nameToId) {
+    private static String detectLeftEntityId(List<EntityDef> entities, Map<String, String> nameToId,
+                                             List<RelationshipDef> relationships) {
         for (EntityDef entity : entities) {
             if (matchesLeftRole(entity.name())) {
                 return nameToId.get(normalize(entity.name()));
             }
         }
+        String bestId = null;
+        int bestDegree = -1;
+        for (EntityDef entity : entities) {
+            if (matchesRightRole(entity.name()) && !matchesLeftRole(entity.name())) {
+                continue;
+            }
+            String id = nameToId.get(normalize(entity.name()));
+            int degree = entityDegree(id, relationships, nameToId);
+            if (degree > bestDegree) {
+                bestDegree = degree;
+                bestId = id;
+            }
+        }
+        if (bestId != null) {
+            return bestId;
+        }
         return nameToId.values().stream().findFirst().orElse(null);
+    }
+
+    private static int entityDegree(String entityId, List<RelationshipDef> relationships,
+                                    Map<String, String> nameToId) {
+        if (entityId == null) {
+            return 0;
+        }
+        int count = 0;
+        for (RelationshipDef rel : relationships) {
+            String aId = nameToId.get(normalize(rel.entityA()));
+            String bId = nameToId.get(normalize(rel.entityB()));
+            if (entityId.equals(aId) || entityId.equals(bId)) {
+                count++;
+            }
+        }
+        return count;
     }
 
     private static String detectRightEntityId(List<EntityDef> entities, Map<String, String> nameToId, String leftId) {
@@ -297,11 +410,27 @@ final class ChenErLayoutBuilder {
         if (name == null) {
             return false;
         }
-        return Set.of("用户", "会员", "学生", "客户", "读者", "顾客").stream().anyMatch(name::contains);
+        if (name.contains("实习生")) {
+            return true;
+        }
+        if (name.contains("职员") || name.contains("员工")) {
+            return !name.contains("部门") || name.contains("部门职员");
+        }
+        return Set.of("用户", "会员", "学生", "客户", "读者", "顾客", "业主")
+            .stream().anyMatch(name::contains);
     }
 
     private static boolean matchesRightRole(String name) {
-        return name != null && name.contains("管理员");
+        if (name == null) {
+            return false;
+        }
+        if (name.contains("管理员")) {
+            return true;
+        }
+        if (name.equals("部门")) {
+            return true;
+        }
+        return name.endsWith("部门") && !name.contains("职员") && !name.contains("实习生");
     }
 
     private static ErEdgeVo buildEdge(String id, String from, String to, String label) {

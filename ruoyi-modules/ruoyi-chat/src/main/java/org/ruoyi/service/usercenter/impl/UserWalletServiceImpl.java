@@ -1,6 +1,7 @@
 package org.ruoyi.service.usercenter.impl;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
 import com.baomidou.mybatisplus.core.toolkit.Wrappers;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import lombok.RequiredArgsConstructor;
@@ -8,6 +9,7 @@ import org.ruoyi.common.core.exception.ServiceException;
 import org.ruoyi.common.mybatis.core.page.PageQuery;
 import org.ruoyi.common.mybatis.core.page.TableDataInfo;
 import org.ruoyi.common.satoken.utils.LoginHelper;
+import org.ruoyi.common.tenant.helper.TenantHelper;
 import org.ruoyi.domain.entity.usercenter.UcWallet;
 import org.ruoyi.domain.entity.usercenter.UcWalletLog;
 import org.ruoyi.domain.vo.usercenter.UcWalletLogVo;
@@ -31,7 +33,30 @@ public class UserWalletServiceImpl implements IUserWalletService {
 
     @Override
     public long getBalance(Long userId) {
-        return getOrCreateWallet(userId).getBalance();
+        return TenantHelper.ignore(() -> {
+            Long sumFromLogs = walletLogMapper.sumChangeAmountByUserId(userId);
+            long logBalance = sumFromLogs == null ? 0L : sumFromLogs;
+            UcWallet wallet = findWallet(userId);
+            if (wallet == null) {
+                if (logBalance <= 0) {
+                    return 0L;
+                }
+                wallet = getOrCreateWallet(userId);
+            }
+            long balance = wallet.getBalance() == null ? 0L : wallet.getBalance();
+            long targetBalance = Math.max(balance, logBalance);
+            if (targetBalance <= 0) {
+                return 0L;
+            }
+            if (balance != targetBalance) {
+                LambdaUpdateWrapper<UcWallet> uw = Wrappers.lambdaUpdate();
+                uw.set(UcWallet::getBalance, targetBalance)
+                    .eq(UcWallet::getWalletId, wallet.getWalletId())
+                    .eq(UcWallet::getUserId, userId);
+                walletMapper.update(null, uw);
+            }
+            return targetBalance;
+        });
     }
 
     @Override
@@ -55,40 +80,54 @@ public class UserWalletServiceImpl implements IUserWalletService {
         if (changeAmount == 0) {
             return;
         }
-        UcWallet wallet = getOrCreateWallet(userId);
-        long newBalance = wallet.getBalance() + changeAmount;
-        if (newBalance < 0) {
-            throw new ServiceException("金币余额不足");
-        }
-        wallet.setBalance(newBalance);
-        int updated = walletMapper.updateById(wallet);
-        if (updated == 0) {
-            throw new ServiceException("余额更新失败，请重试");
-        }
-        UcWalletLog log = new UcWalletLog();
-        log.setUserId(userId);
-        log.setChangeAmount(changeAmount);
-        log.setBalanceAfter(newBalance);
-        log.setBizType(bizType);
-        log.setBizNo(bizNo);
-        log.setDescription(description);
-        log.setTenantId(LoginHelper.getTenantId());
-        walletLogMapper.insert(log);
+        TenantHelper.ignore(() -> {
+            UcWallet wallet = getOrCreateWallet(userId);
+            long oldBalance = wallet.getBalance() == null ? 0L : wallet.getBalance();
+            long newBalance = oldBalance + changeAmount;
+            if (newBalance < 0) {
+                throw new ServiceException("金币余额不足");
+            }
+            LambdaUpdateWrapper<UcWallet> uw = Wrappers.lambdaUpdate();
+            uw.set(UcWallet::getBalance, newBalance)
+                .eq(UcWallet::getWalletId, wallet.getWalletId())
+                .eq(UcWallet::getUserId, userId);
+            int updated = walletMapper.update(null, uw);
+            if (updated == 0) {
+                throw new ServiceException("余额更新失败，请重试");
+            }
+            UcWalletLog log = new UcWalletLog();
+            log.setUserId(userId);
+            log.setChangeAmount(changeAmount);
+            log.setBalanceAfter(newBalance);
+            log.setBizType(bizType);
+            log.setBizNo(bizNo);
+            log.setDescription(description);
+            log.setTenantId(LoginHelper.getTenantId());
+            walletLogMapper.insert(log);
+            return null;
+        });
     }
 
     @Override
     public TableDataInfo<UcWalletLogVo> listLogs(Long userId, PageQuery pageQuery) {
-        LambdaQueryWrapper<UcWalletLog> lqw = Wrappers.lambdaQuery();
-        lqw.eq(UcWalletLog::getUserId, userId);
-        lqw.orderByDesc(UcWalletLog::getCreateTime);
-        Page<UcWalletLogVo> page = walletLogMapper.selectVoPage(pageQuery.build(), lqw);
-        return TableDataInfo.build(page);
+        return TenantHelper.ignore(() -> {
+            LambdaQueryWrapper<UcWalletLog> lqw = Wrappers.lambdaQuery();
+            lqw.eq(UcWalletLog::getUserId, userId);
+            lqw.orderByDesc(UcWalletLog::getCreateTime);
+            Page<UcWalletLogVo> page = walletLogMapper.selectVoPage(pageQuery.build(), lqw);
+            return TableDataInfo.build(page);
+        });
+    }
+
+    private UcWallet findWallet(Long userId) {
+        LambdaQueryWrapper<UcWallet> lqw = Wrappers.lambdaQuery();
+        lqw.eq(UcWallet::getUserId, userId);
+        lqw.last("LIMIT 1");
+        return walletMapper.selectOne(lqw);
     }
 
     private UcWallet getOrCreateWallet(Long userId) {
-        LambdaQueryWrapper<UcWallet> lqw = Wrappers.lambdaQuery();
-        lqw.eq(UcWallet::getUserId, userId);
-        UcWallet wallet = walletMapper.selectOne(lqw);
+        UcWallet wallet = findWallet(userId);
         if (wallet != null) {
             return wallet;
         }
@@ -96,7 +135,6 @@ public class UserWalletServiceImpl implements IUserWalletService {
         wallet.setUserId(userId);
         wallet.setBalance(0L);
         wallet.setFrozenBalance(0L);
-        wallet.setVersion(0L);
         wallet.setTenantId(LoginHelper.getTenantId());
         walletMapper.insert(wallet);
         return wallet;

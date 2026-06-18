@@ -65,6 +65,11 @@ public class SysUserVo implements Serializable {
     private String nickName;
 
     /**
+     * 邀请码
+     */
+    private String inviteCode;
+
+    /**
      * 用户类型（sys_user系统用户）
      */
     private String userType;

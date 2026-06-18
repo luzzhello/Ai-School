@@ -46,6 +46,11 @@ public class ProfileUserVo implements Serializable {
     private String nickName;
 
     /**
+     * 邀请码
+     */
+    private String inviteCode;
+
+    /**
      * 用户类型（sys_user系统用户）
      */
     private String userType;
@@ -82,9 +87,19 @@ public class ProfileUserVo implements Serializable {
     private Date loginDate;
 
     /**
+     * 注册时间
+     */
+    private Date createTime;
+
+    /**
      * 部门名
      */
     @Translation(type = TransConstant.DEPT_ID_TO_NAME, mapper = "deptId")
     private String deptName;
+
+    /**
+     * 备注（个人简介）
+     */
+    private String remark;
 
 }

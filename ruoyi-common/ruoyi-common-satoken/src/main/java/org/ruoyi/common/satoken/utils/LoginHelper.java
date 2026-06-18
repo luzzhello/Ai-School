@@ -1,5 +1,6 @@
 package org.ruoyi.common.satoken.utils;
 
+import cn.dev33.satoken.exception.NotLoginException;
 import cn.dev33.satoken.session.SaSession;
 import cn.dev33.satoken.stp.StpUtil;
 import cn.dev33.satoken.stp.parameter.SaLoginParameter;
@@ -65,11 +66,16 @@ public class LoginHelper {
      */
     @SuppressWarnings("unchecked cast")
     public static <T extends LoginUser> T getLoginUser() {
-        SaSession session = StpUtil.getTokenSession();
-        if (ObjectUtil.isNull(session)) {
+        try {
+            SaSession session = StpUtil.getTokenSession();
+            if (ObjectUtil.isNull(session)) {
+                return null;
+            }
+            return (T) session.get(LOGIN_USER_KEY);
+        } catch (NotLoginException ignored) {
+            // 匿名接口若携带失效/冻结 token，视为未登录
             return null;
         }
-        return (T) session.get(LOGIN_USER_KEY);
     }
 
     /**

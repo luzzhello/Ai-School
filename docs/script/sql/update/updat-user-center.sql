@@ -62,9 +62,9 @@ CREATE TABLE `uc_membership_plan` (
 
 INSERT INTO `uc_membership_plan` (`plan_code`, `plan_name`, `price_coins`, `original_coins`, `duration_days`, `sort_order`, `benefits_json`, `status`, `create_time`) VALUES
 ('FREE',  '免费会员', 0,    0,     0,   1, '{"sqlLimit":"有限","aiDaily":3,"fileLimit":10}', '0', NOW()),
-('WEEK',  '周会员',   990,  1500,  7,   2, '{"sqlLimit":"无限","aiDaily":15,"fileLimit":50}', '0', NOW()),
-('MONTH', '月会员',   2990, 5000,  30,  3, '{"sqlLimit":"无限","aiDaily":25,"fileLimit":200}', '0', NOW()),
-('YEAR',  '年会员',   9990, 15000, 365, 4, '{"sqlLimit":"无限","aiDaily":50,"fileLimit":1000}', '0', NOW());
+('WEEK',  '周会员',   990,  1590,  7,   2, '{"sqlLimit":"无限","aiDaily":15,"fileLimit":50}', '0', NOW()),
+('MONTH', '月会员',   2990, 3990,  30,  3, '{"sqlLimit":"无限","aiDaily":25,"fileLimit":200}', '0', NOW()),
+('YEAR',  '年会员',   9990, 14990, 365, 4, '{"sqlLimit":"无限","aiDaily":50,"fileLimit":1000}', '0', NOW());
 
 -- 用户会员订阅
 DROP TABLE IF EXISTS `uc_user_membership`;

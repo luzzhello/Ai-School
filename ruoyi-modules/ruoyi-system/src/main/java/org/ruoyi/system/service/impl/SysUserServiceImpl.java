@@ -21,6 +21,7 @@ import org.ruoyi.common.core.service.UserService;
 import org.ruoyi.common.core.utils.*;
 import org.ruoyi.common.mybatis.core.page.PageQuery;
 import org.ruoyi.common.mybatis.core.page.TableDataInfo;
+import org.ruoyi.common.mybatis.helper.DataPermissionHelper;
 import org.ruoyi.common.satoken.utils.LoginHelper;
 import org.ruoyi.system.domain.SysUser;
 import org.ruoyi.system.domain.SysUserPost;
@@ -314,6 +315,10 @@ public class SysUserServiceImpl implements ISysUserService, UserService {
         // 新增用户信息
         int rows = baseMapper.insert(sysUser);
         user.setUserId(sysUser.getUserId());
+        if (rows > 0) {
+            String inviteCode = ensureInviteCode(sysUser.getUserId());
+            user.setInviteCode(inviteCode);
+        }
         // 新增用户岗位关联
         insertUserPost(user, false);
         // 新增用户与角色管理
@@ -328,12 +333,43 @@ public class SysUserServiceImpl implements ISysUserService, UserService {
      * @return 结果
      */
     @Override
+    @Transactional(rollbackFor = Exception.class)
     public boolean registerUser(SysUserBo user, String tenantId) {
         user.setCreateBy(0L);
         user.setUpdateBy(0L);
         SysUser sysUser = MapstructUtils.convert(user, SysUser.class);
         sysUser.setTenantId(tenantId);
-        return baseMapper.insert(sysUser) > 0;
+        int rows = DataPermissionHelper.ignore(() -> baseMapper.insert(sysUser));
+        if (rows > 0) {
+            user.setUserId(sysUser.getUserId());
+            String inviteCode = DataPermissionHelper.ignore(() -> ensureInviteCode(sysUser.getUserId()));
+            user.setInviteCode(inviteCode);
+        }
+        return rows > 0;
+    }
+
+    @Override
+    public String ensureInviteCode(Long userId) {
+        return DataPermissionHelper.ignore(() -> doEnsureInviteCode(userId));
+    }
+
+    private String doEnsureInviteCode(Long userId) {
+        if (userId == null) {
+            return null;
+        }
+        SysUser user = baseMapper.selectById(userId);
+        if (user == null) {
+            return null;
+        }
+        if (StringUtils.isNotBlank(user.getInviteCode())) {
+            return user.getInviteCode();
+        }
+        String inviteCode = InviteCodeUtils.generateForUserId(userId);
+        SysUser update = new SysUser();
+        update.setUserId(userId);
+        update.setInviteCode(inviteCode);
+        baseMapper.updateById(update);
+        return inviteCode;
     }
 
     /**
@@ -401,6 +437,7 @@ public class SysUserServiceImpl implements ISysUserService, UserService {
                 .set(SysUser::getPhonenumber, user.getPhonenumber())
                 .set(SysUser::getEmail, user.getEmail())
                 .set(SysUser::getSex, user.getSex())
+                .set(SysUser::getRemark, user.getRemark())
                 .eq(SysUser::getUserId, user.getUserId()));
     }
 

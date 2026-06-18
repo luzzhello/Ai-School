@@ -31,4 +31,14 @@ public interface GlobalConstants {
      * 三方认证 redis key
      */
     String SOCIAL_AUTH_CODE_KEY = GLOBAL_REDIS_KEY + "social_auth_codes:";
+
+    /**
+     * 微信公众号扫码登录 ticket redis key
+     */
+    String WX_QRCODE_TICKET_KEY = GLOBAL_REDIS_KEY + "wx_qrcode_ticket:";
+
+    /**
+     * 微信公众号 access_token redis key
+     */
+    String WX_MP_ACCESS_TOKEN_KEY = GLOBAL_REDIS_KEY + "wx_mp_access_token";
 }

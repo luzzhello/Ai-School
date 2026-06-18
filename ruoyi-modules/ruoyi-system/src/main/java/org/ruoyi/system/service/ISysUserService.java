@@ -155,6 +155,11 @@ public interface ISysUserService {
     boolean registerUser(SysUserBo user, String tenantId);
 
     /**
+     * 确保用户已有邀请码（无则自动生成并写库）
+     */
+    String ensureInviteCode(Long userId);
+
+    /**
      * 修改用户信息
      *
      * @param user 用户信息

@@ -50,4 +50,11 @@ public class SysUserProfileBo extends BaseEntity {
      */
     private String sex;
 
+    /**
+     * 备注（个人简介）
+     */
+    @Xss(message = "个人简介不能包含脚本字符")
+    @Size(max = 200, message = "个人简介长度不能超过{max}个字符")
+    private String remark;
+
 }

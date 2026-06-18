@@ -7,15 +7,21 @@ import org.ruoyi.common.core.exception.ServiceException;
 import org.ruoyi.common.core.utils.StringUtils;
 import org.ruoyi.domain.entity.usercenter.UcMembershipPlan;
 import org.ruoyi.domain.entity.usercenter.UcUserMembership;
+import org.ruoyi.domain.vo.usercenter.MembershipPurchaseCreateVo;
+import org.ruoyi.domain.vo.usercenter.MembershipPurchasePreviewVo;
 import org.ruoyi.domain.vo.usercenter.UcMembershipPlanVo;
 import org.ruoyi.mapper.usercenter.UcMembershipPlanMapper;
 import org.ruoyi.mapper.usercenter.UcUserMembershipMapper;
+import org.ruoyi.service.usercenter.IPayOrderService;
 import org.ruoyi.service.usercenter.IUserMembershipService;
 import org.ruoyi.service.usercenter.IUserWalletService;
 import org.ruoyi.service.usercenter.UserCenterConstants;
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.math.BigDecimal;
+import java.math.RoundingMode;
 import java.util.Calendar;
 import java.util.Date;
 import java.util.List;
@@ -28,6 +34,7 @@ public class UserMembershipServiceImpl implements IUserMembershipService {
     private final UcMembershipPlanMapper planMapper;
     private final UcUserMembershipMapper membershipMapper;
     private final IUserWalletService walletService;
+    private final ObjectProvider<IPayOrderService> payOrderServiceProvider;
 
     @Override
     public UcUserMembership getActiveMembership(Long userId) {
@@ -71,18 +78,94 @@ public class UserMembershipServiceImpl implements IUserMembershipService {
     @Override
     @Transactional(rollbackFor = Exception.class)
     public void purchase(Long userId, String planCode) {
+        createPurchaseOrder(userId, planCode);
+    }
+
+    @Override
+    public MembershipPurchasePreviewVo previewPurchase(Long userId, String planCode) {
+        UcMembershipPlan plan = getPlan(planCode);
+        long priceCoins = plan.getPriceCoins();
+        long balance = walletService.getBalance(userId);
+        long coinsUsed = Math.min(balance, priceCoins);
+        long shortageCoins = priceCoins - coinsUsed;
+        BigDecimal cashYuan = BigDecimal.valueOf(shortageCoins)
+            .divide(BigDecimal.valueOf(UserCenterConstants.COINS_PER_YUAN), 2, RoundingMode.HALF_UP);
+
+        MembershipPurchasePreviewVo vo = new MembershipPurchasePreviewVo();
+        vo.setPlanCode(planCode);
+        vo.setPlanName(plan.getPlanName());
+        vo.setPriceCoins(priceCoins);
+        vo.setBalance(balance);
+        vo.setCoinsUsed(coinsUsed);
+        vo.setShortageCoins(shortageCoins);
+        vo.setCashYuan(cashYuan);
+        vo.setSufficient(shortageCoins == 0);
+        return vo;
+    }
+
+    @Override
+    @Transactional(rollbackFor = Exception.class)
+    public MembershipPurchaseCreateVo createPurchaseOrder(Long userId, String planCode) {
         if (UserCenterConstants.PLAN_FREE.equals(planCode)) {
             throw new ServiceException("免费会员无需购买");
         }
         UcMembershipPlan plan = getPlan(planCode);
-        if (plan.getPriceCoins() == null || plan.getPriceCoins() <= 0) {
-            throw new ServiceException("套餐价格配置异常");
-        }
-        String bizNo = "MBR" + UUID.randomUUID().toString().replace("-", "").substring(0, 16);
-        walletService.changeBalance(userId, -plan.getPriceCoins(),
-            UserCenterConstants.BIZ_MEMBERSHIP_BUY, bizNo,
-            "购买会员：" + plan.getPlanName());
+        MembershipPurchasePreviewVo preview = previewPurchase(userId, planCode);
+        String orderNo = "MBR" + System.currentTimeMillis() + UUID.randomUUID().toString().replace("-", "").substring(0, 6);
 
+        if (preview.getCoinsUsed() > 0) {
+            walletService.changeBalance(
+                userId,
+                -preview.getCoinsUsed(),
+                UserCenterConstants.BIZ_MEMBERSHIP_BUY,
+                orderNo,
+                "购买「" + plan.getPlanName() + "」抵扣金币 " + preview.getCoinsUsed()
+            );
+        }
+
+        MembershipPurchaseCreateVo vo = new MembershipPurchaseCreateVo();
+        vo.setPlanCode(planCode);
+        vo.setPlanName(plan.getPlanName());
+        vo.setCoinsUsed(preview.getCoinsUsed());
+
+        if (preview.getShortageCoins() == 0) {
+            activateByPlanCode(userId, planCode, orderNo);
+            payOrderService().createPaidMembershipOrder(
+                userId, planCode, plan.getPlanName(), preview.getPriceCoins(), preview.getCoinsUsed(), orderNo);
+            vo.setCompleted(true);
+            vo.setOrderNo(orderNo);
+            vo.setCashYuan(BigDecimal.ZERO);
+            vo.setStatus(UserCenterConstants.PAY_ORDER_PAID);
+            return vo;
+        }
+
+        payOrderService().createMembershipPendingOrder(
+            orderNo,
+            userId,
+            planCode,
+            plan.getPlanName(),
+            preview.getPriceCoins(),
+            preview.getCoinsUsed(),
+            preview.getCashYuan()
+        );
+        vo.setCompleted(false);
+        vo.setOrderNo(orderNo);
+        vo.setCashYuan(preview.getCashYuan());
+        vo.setStatus(UserCenterConstants.PAY_ORDER_PENDING);
+        return vo;
+    }
+
+    private IPayOrderService payOrderService() {
+        return payOrderServiceProvider.getObject();
+    }
+
+    @Override
+    @Transactional(rollbackFor = Exception.class)
+    public void activateByPlanCode(Long userId, String planCode, String bizNo) {
+        if (UserCenterConstants.PLAN_FREE.equals(planCode)) {
+            throw new ServiceException("免费会员无需购买");
+        }
+        UcMembershipPlan plan = getPlan(planCode);
         Date now = new Date();
         UcUserMembership active = getActiveMembership(userId);
         Date start = now;
@@ -92,7 +175,8 @@ public class UserMembershipServiceImpl implements IUserMembershipService {
             && !UserCenterConstants.PLAN_FREE.equals(active.getPlanCode())) {
             start = active.getStartTime();
             expire = addDays(active.getExpireTime(), plan.getDurationDays());
-        } else {
+        }
+        else {
             expire = addDays(now, plan.getDurationDays());
         }
         expireAllActive(userId);
@@ -114,6 +198,9 @@ public class UserMembershipServiceImpl implements IUserMembershipService {
         UcMembershipPlan plan = planMapper.selectOne(lqw);
         if (plan == null) {
             throw new ServiceException("会员套餐不存在");
+        }
+        if (plan.getPriceCoins() == null || plan.getPriceCoins() <= 0) {
+            throw new ServiceException("套餐价格配置异常");
         }
         return plan;
     }

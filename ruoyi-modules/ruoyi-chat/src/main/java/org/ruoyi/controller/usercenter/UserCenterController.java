@@ -15,11 +15,17 @@ import org.ruoyi.domain.dto.request.usercenter.WorkFileQueryRequest;
 import org.ruoyi.domain.dto.request.usercenter.WorkFileSaveRequest;
 import org.ruoyi.domain.entity.usercenter.UcUserMembership;
 import org.ruoyi.domain.entity.usercenter.UcWorkFile;
+import org.ruoyi.domain.vo.usercenter.UcMembershipFeatureQuotaVo;
 import org.ruoyi.domain.vo.usercenter.UcMembershipPlanVo;
 import org.ruoyi.domain.vo.usercenter.UcWalletLogVo;
 import org.ruoyi.domain.vo.usercenter.UcWorkFileVo;
 import org.ruoyi.domain.vo.usercenter.UserCenterOverviewVo;
 import org.ruoyi.mapper.usercenter.UcWorkFileMapper;
+import org.ruoyi.domain.vo.usercenter.FeatureQuoteVo;
+import org.ruoyi.domain.vo.usercenter.MembershipPurchaseCreateVo;
+import org.ruoyi.domain.vo.usercenter.MembershipPurchasePreviewVo;
+import org.ruoyi.service.usercenter.IFeatureCoinService;
+import org.ruoyi.service.usercenter.IMembershipFeatureQuotaService;
 import org.ruoyi.service.usercenter.IUserCenterService;
 import org.ruoyi.service.usercenter.IUserMembershipService;
 import org.ruoyi.service.usercenter.IUserWalletService;
@@ -43,13 +49,37 @@ public class UserCenterController extends BaseController {
     private final IUserCenterService userCenterService;
     private final IUserWalletService walletService;
     private final IUserMembershipService membershipService;
+    private final IMembershipFeatureQuotaService membershipFeatureQuotaService;
     private final IUserWorkFileService workFileService;
+    private final IFeatureCoinService featureCoinService;
     private final UcWorkFileMapper workFileMapper;
+
+    @GetMapping("/sidebar")
+    public R<UserCenterOverviewVo> sidebar() {
+        LoginUser user = requireLogin();
+        return R.ok(userCenterService.sidebar(
+            user.getUserId(), user.getUsername(), resolveNickName(user), user.getInviteCode()));
+    }
 
     @GetMapping("/overview")
     public R<UserCenterOverviewVo> overview() {
         LoginUser user = requireLogin();
-        return R.ok(userCenterService.overview(user.getUserId(), user.getUsername(), user.getNickname()));
+        return R.ok(userCenterService.overview(
+            user.getUserId(), user.getUsername(), resolveNickName(user), user.getInviteCode()));
+    }
+
+    private String resolveNickName(LoginUser user) {
+        return org.ruoyi.common.core.utils.StringUtils.isNotBlank(user.getNickname())
+            ? user.getNickname()
+            : user.getUsername();
+    }
+
+    @GetMapping("/feature/quote")
+    public R<FeatureQuoteVo> featureQuote(
+        @RequestParam String featureCode,
+        @RequestParam(required = false) Integer wordCount) {
+        Long userId = requireLogin().getUserId();
+        return R.ok(featureCoinService.quote(userId, featureCode, wordCount));
     }
 
     @GetMapping("/wallet/balance")
@@ -88,11 +118,28 @@ public class UserCenterController extends BaseController {
         return R.ok(membershipService.listPlans(userId));
     }
 
-    @PostMapping("/membership/purchase")
-    public R<Void> purchaseMembership(@RequestBody @Valid MembershipPurchaseRequest request) {
+    @GetMapping("/membership/featureQuotas")
+    public R<List<UcMembershipFeatureQuotaVo>> membershipFeatureQuotas() {
+        requireLogin();
+        return R.ok(membershipFeatureQuotaService.listEnabled());
+    }
+
+    @GetMapping("/membership/purchase/preview")
+    public R<MembershipPurchasePreviewVo> previewMembershipPurchase(@RequestParam String planCode) {
         Long userId = requireLogin().getUserId();
-        membershipService.purchase(userId, request.getPlanCode());
-        return R.ok();
+        return R.ok(membershipService.previewPurchase(userId, planCode));
+    }
+
+    @PostMapping("/membership/purchase/create")
+    public R<MembershipPurchaseCreateVo> createMembershipPurchase(@RequestBody @Valid MembershipPurchaseRequest request) {
+        Long userId = requireLogin().getUserId();
+        return R.ok(membershipService.createPurchaseOrder(userId, request.getPlanCode()));
+    }
+
+    @PostMapping("/membership/purchase")
+    public R<MembershipPurchaseCreateVo> purchaseMembership(@RequestBody @Valid MembershipPurchaseRequest request) {
+        Long userId = requireLogin().getUserId();
+        return R.ok(membershipService.createPurchaseOrder(userId, request.getPlanCode()));
     }
 
     @GetMapping("/files/page")

@@ -8,15 +8,18 @@ import lombok.RequiredArgsConstructor;
 import org.apache.commons.lang3.math.NumberUtils;
 import org.ruoyi.common.core.constant.Constants;
 import org.ruoyi.common.core.constant.SystemConstants;
+import org.ruoyi.common.core.constant.TenantConstants;
 import org.ruoyi.common.core.domain.dto.VisitorLoginUserDto;
 import org.ruoyi.common.core.enums.UserType;
 import org.ruoyi.common.core.exception.ServiceException;
 import org.ruoyi.common.core.service.UserLoginService;
 import org.ruoyi.common.core.utils.MessageUtils;
+import org.ruoyi.common.core.utils.StringUtils;
 import org.ruoyi.common.satoken.utils.LoginHelper;
 import org.ruoyi.system.domain.bo.SysUserBo;
 import org.ruoyi.system.domain.vo.SysClientVo;
 import org.ruoyi.system.domain.vo.SysUserVo;
+import org.ruoyi.system.service.AppUserRoleBinder;
 import org.ruoyi.system.service.ISysClientService;
 import org.ruoyi.system.service.SysLoginService;
 import org.springframework.stereotype.Service;
@@ -32,6 +35,8 @@ public class UserLoginServiceImpl implements UserLoginService {
     private final ISysClientService clientService;
 
     private final SysLoginService sysLoginService;
+
+    private final AppUserRoleBinder appUserRoleBinder;
 
 
     public VisitorLoginUserDto mpLogin(String openid, String clientId) {
@@ -57,22 +62,24 @@ public class UserLoginServiceImpl implements UserLoginService {
             // 设置微信openId
             sysUser.setOpenId(openid);
             // 设置用户类型
-            sysUser.setUserType(UserType.SYS_USER.getUserType());
+            sysUser.setUserType(UserType.APP_USER.getUserType());
             // 设置默认余额
             sysUser.setUserBalance(NumberUtils.toDouble("1"));
-            // 注册用户,设置默认租户为0
-            userService.registerUser(sysUser, "0");
-            // 构建登录用户信息
+            userService.registerUser(sysUser, TenantConstants.DEFAULT_TENANT_ID);
+            appUserRoleBinder.bindIfAbsent(sysUser.getUserId());
             loginUser.setUserId(sysUser.getUserId());
             loginUser.setUsername(sysUser.getUserName());
-            loginUser.setUserType(UserType.SYS_USER.getUserType());
+            loginUser.setNickname(sysUser.getNickName());
+            loginUser.setUserType(UserType.APP_USER.getUserType());
             loginUser.setOpenid(openid);
         } else {
             // 此处可根据登录用户的数据不同 自行创建 loginUser
             loginUser.setUserId(user.getUserId());
             loginUser.setUsername(user.getUserName());
-            loginUser.setUserType(UserType.SYS_USER.getUserType());
+            loginUser.setNickname(user.getNickName());
+            loginUser.setUserType(StringUtils.blankToDefault(user.getUserType(), UserType.APP_USER.getUserType()));
             loginUser.setOpenid(openid);
+            appUserRoleBinder.bindIfAbsent(loginUser.getUserId());
         }
         SaLoginParameter model = new SaLoginParameter();
         model.setDeviceType(client.getDeviceType());

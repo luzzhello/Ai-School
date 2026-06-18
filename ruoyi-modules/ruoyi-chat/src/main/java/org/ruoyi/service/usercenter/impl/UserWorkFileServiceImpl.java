@@ -13,9 +13,14 @@ import org.ruoyi.domain.dto.request.usercenter.WorkFileQueryRequest;
 import org.ruoyi.domain.dto.request.usercenter.WorkFileSaveRequest;
 import org.ruoyi.domain.entity.usercenter.UcWorkFile;
 import org.ruoyi.domain.vo.usercenter.UcWorkFileVo;
+import org.ruoyi.common.tenant.helper.TenantHelper;
 import org.ruoyi.mapper.usercenter.UcWorkFileMapper;
 import org.ruoyi.service.usercenter.IUserWorkFileService;
 import org.springframework.stereotype.Service;
+
+import java.time.LocalDateTime;
+import java.time.ZoneId;
+import java.util.Date;
 
 @Service
 @RequiredArgsConstructor
@@ -48,11 +53,19 @@ public class UserWorkFileServiceImpl implements IUserWorkFileService {
         if (request.getFileId() != null) {
             UcWorkFile existing = requireOwned(userId, request.getFileId());
             existing.setFileName(request.getFileName());
-            existing.setDescription(request.getDescription());
-            existing.setFileType(request.getFileType());
-            existing.setThumbnail(request.getThumbnail());
-            existing.setContentJson(request.getContentJson());
-            existing.setFileSize(size);
+            if (request.getDescription() != null) {
+                existing.setDescription(request.getDescription());
+            }
+            if (StringUtils.isNotBlank(request.getFileType())) {
+                existing.setFileType(request.getFileType());
+            }
+            if (request.getThumbnail() != null) {
+                existing.setThumbnail(request.getThumbnail());
+            }
+            if (request.getContentJson() != null) {
+                existing.setContentJson(request.getContentJson());
+                existing.setFileSize(size);
+            }
             workFileMapper.updateById(existing);
             return existing.getFileId();
         }
@@ -74,6 +87,15 @@ public class UserWorkFileServiceImpl implements IUserWorkFileService {
     public void remove(Long userId, Long fileId) {
         requireOwned(userId, fileId);
         workFileMapper.deleteById(fileId);
+    }
+
+    @Override
+    public int cleanExpiredFiles(int retainMonths) {
+        int months = retainMonths > 0 ? retainMonths : 3;
+        Date cutoff = Date.from(
+            LocalDateTime.now().minusMonths(months).atZone(ZoneId.systemDefault()).toInstant()
+        );
+        return TenantHelper.ignore(() -> workFileMapper.physicalDeleteExpired(cutoff));
     }
 
     private UcWorkFile requireOwned(Long userId, Long fileId) {
