@@ -1,0 +1,45 @@
+-- 文献库：知网等来源元数据（供论文生成检索）
+-- MySQL 8+；中文 FULLTEXT 需 ngram（my.cnf: ngram_token_size=2）
+
+CREATE TABLE IF NOT EXISTS `lit_paper` (
+  `id`             BIGINT        NOT NULL AUTO_INCREMENT COMMENT '主键',
+  `cnki_id`        VARCHAR(64)   DEFAULT NULL COMMENT '知网文献ID',
+  `doi`            VARCHAR(200)  DEFAULT NULL COMMENT 'DOI',
+  `title`          VARCHAR(500)  NOT NULL COMMENT '标题',
+  `authors`        VARCHAR(500)  DEFAULT NULL COMMENT '作者',
+  `organs`         VARCHAR(1000) DEFAULT NULL COMMENT '机构',
+  `abstract_text`  MEDIUMTEXT    DEFAULT NULL COMMENT '摘要',
+  `keywords`       VARCHAR(500)  DEFAULT NULL COMMENT '关键词',
+  `source`         VARCHAR(300)  DEFAULT NULL COMMENT '期刊/会议',
+  `year`           INT           DEFAULT NULL COMMENT '年份',
+  `doc_type`       VARCHAR(10)   DEFAULT NULL COMMENT 'J/D/C/M',
+  `cite_count`     INT           DEFAULT 0 COMMENT '被引次数',
+  `lit_source`     VARCHAR(32)   NOT NULL DEFAULT 'CNKI' COMMENT '文献来源',
+  `citation_gbt`   TEXT          DEFAULT NULL COMMENT 'GB/T 7714',
+  `detail_url`     VARCHAR(1000) DEFAULT NULL COMMENT '详情URL',
+  `title_hash`     CHAR(64)      DEFAULT NULL COMMENT '规范化标题哈希',
+  `crawl_keyword`  VARCHAR(200)  DEFAULT NULL COMMENT '首次检索词',
+  `status`         VARCHAR(20)   NOT NULL DEFAULT 'active' COMMENT 'active/incomplete',
+  `crawled_at`     DATETIME      DEFAULT NULL,
+  `create_time`    DATETIME      DEFAULT CURRENT_TIMESTAMP,
+  `update_time`    DATETIME      DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uk_lit_paper_cnki_id` (`cnki_id`),
+  UNIQUE KEY `uk_lit_paper_doi` (`doi`),
+  KEY `idx_lit_paper_year` (`year`),
+  KEY `idx_lit_paper_cite` (`cite_count`),
+  KEY `idx_lit_paper_type` (`doc_type`),
+  KEY `idx_lit_paper_title_hash_year` (`title_hash`, `year`),
+  KEY `idx_lit_paper_status` (`status`),
+  FULLTEXT KEY `ft_lit_paper` (`title`, `keywords`, `abstract_text`) WITH PARSER ngram
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='文献库主表';
+
+CREATE TABLE IF NOT EXISTS `lit_paper_ref` (
+  `id`         BIGINT       NOT NULL AUTO_INCREMENT,
+  `paper_id`   BIGINT       NOT NULL,
+  `ref_index`  INT          NOT NULL,
+  `raw_text`   TEXT         NOT NULL,
+  PRIMARY KEY (`id`),
+  KEY `idx_lit_paper_ref_paper` (`paper_id`, `ref_index`),
+  CONSTRAINT `fk_lit_paper_ref_paper` FOREIGN KEY (`paper_id`) REFERENCES `lit_paper` (`id`) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='文献参考文献列表';
