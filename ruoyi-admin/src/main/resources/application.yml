@@ -371,3 +371,8 @@ chat:
   model:
     # 默认对话模型（对应 chat_model 表中的 model_name）
     default-model: deepseek-v4-pro
+
+--- # 论文文献库检索
+paper:
+  lit:
+    recent-years: 8
