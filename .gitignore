@@ -52,3 +52,6 @@ data/
 
 .flattened-pom.xml
 /.claude/settings.local.json
+
+# Git worktrees (local isolated workspaces)
+.worktrees/
