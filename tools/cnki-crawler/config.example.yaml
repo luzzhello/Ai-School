@@ -1,0 +1,16 @@
+cookie: "REPLACE_WITH_BROWSER_COOKIE"
+user_agent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
+list_delay_sec: 2.0
+detail_delay_sec: 4.0
+delay_jitter_sec: 1.5
+daily_detail_limit: 800
+max_per_keyword: 200
+from_year: 2018
+to_year: 2026
+doc_types:
+  - journal
+  - conference
+  - master
+  - phd
+output_jsonl: data/papers.jsonl
+checkpoint_path: data/checkpoint.json

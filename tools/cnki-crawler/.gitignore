@@ -1,0 +1,7 @@
+data/*.jsonl
+data/checkpoint.json
+data/logs/
+config.yaml
+__pycache__/
+.pytest_cache/
+.venv/
