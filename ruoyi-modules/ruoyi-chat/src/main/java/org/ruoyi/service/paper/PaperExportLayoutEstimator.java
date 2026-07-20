@@ -85,7 +85,9 @@ final class PaperExportLayoutEstimator {
         addPageBreak();
         addLines(3);
         addLines(countTocEntries(toc));
-        addPageBreak();
+        // 目录之后正文阿拉伯页码从 1 起，与 Word 分节一致
+        currentPage = 1;
+        linesOnPage = 0;
     }
 
     private int countTocEntries(List<TocNode> toc) {
@@ -144,6 +146,28 @@ final class PaperExportLayoutEstimator {
             }
             if (trim.isEmpty()) {
                 i++;
+                continue;
+            }
+            // 与 WordExportService 一致：跳过插图编辑元数据
+            if (trim.startsWith("[[[PAPER_DRAW:")
+                || trim.startsWith("<<<PAPER_DRAW:")
+                || (trim.startsWith("<!--") && trim.contains("paper-draw"))
+                || "<<>>".equals(trim)) {
+                if ((trim.startsWith("[[[PAPER_DRAW:") && !trim.contains("]]]"))
+                    || (trim.startsWith("<<<PAPER_DRAW:") && !trim.contains(">>>"))
+                    || (trim.startsWith("<!--") && !trim.contains("-->"))) {
+                    int j = i + 1;
+                    while (j < lines.length && j - i < 30) {
+                        String next = lines[j].strip();
+                        j++;
+                        if (next.contains("]]]") || next.contains(">>>") || next.contains("-->")) {
+                            break;
+                        }
+                    }
+                    i = j;
+                } else {
+                    i++;
+                }
                 continue;
             }
             if (isTableLine(trim)) {

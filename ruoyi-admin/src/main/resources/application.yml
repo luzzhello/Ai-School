@@ -172,6 +172,14 @@ tenant:
     - doc_agent_task_def
     - doc_agent_session
     - doc_agent_task_record
+    # 论文生成 / 文献库（表结构无 tenant_id）
+    - paper_session
+    - paper_reference
+    - paper_chapter
+    - lit_paper
+    - lit_paper_ref
+    - lit_paper_en
+    - lit_paper_en_ref
 
 # 支付宝支付（金币充值 / 会员补差）
 # sign-mode: key=公钥模式（开发简单）  cert=证书模式（正式推荐）
@@ -276,6 +284,8 @@ xss:
   # 排除链接
   excludeUrls:
     - /system/notice
+    # 论文章节正文含 Markdown / 插图编辑标记，禁止 cleanHtmlTag 剥内容
+    - /api/paper/chapter/save
 
 --- # 分布式锁 lock4j 全局配置
 lock4j:
@@ -370,9 +380,9 @@ vector-store:
 chat:
   model:
     # 默认对话模型（对应 chat_model 表中的 model_name）
-    default-model: deepseek-v4-pro
+    default-model: deepseek-v4-flash
 
 --- # 论文文献库检索
 paper:
   lit:
-    recent-years: 8
+    recent-years: 5

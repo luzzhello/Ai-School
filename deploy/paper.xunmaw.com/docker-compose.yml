@@ -1,0 +1,93 @@
+# paper.xunmaw.com 生产环境 — MySQL + Redis + 后端
+# 在服务器 /opt/paper 目录下运行: docker compose up -d
+
+services:
+  mysql:
+    image: mysql:8.0.33
+    container_name: paper-mysql
+    restart: always
+    ports:
+      - "127.0.0.1:3306:3306"
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-Paper@2026Root}
+      MYSQL_DATABASE: ruoyi-ai
+      TZ: Asia/Shanghai
+    volumes:
+      - mysql-data:/var/lib/mysql
+      - ./init-sql:/docker-entrypoint-initdb.d:ro
+    command:
+      - --default-authentication-plugin=mysql_native_password
+      - --character-set-server=utf8mb4
+      - --collation-server=utf8mb4_general_ci
+      - --explicit_defaults_for_timestamp=true
+      - --lower_case_table_names=1
+      - --skip-ssl
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "root", "-p${MYSQL_ROOT_PASSWORD:-Paper@2026Root}"]
+      interval: 15s
+      timeout: 10s
+      retries: 10
+      start_period: 90s
+    networks:
+      - paper-net
+
+  redis:
+    image: redis:6.2-alpine
+    container_name: paper-redis
+    restart: always
+    ports:
+      - "127.0.0.1:6379:6379"
+    volumes:
+      - redis-data:/data
+    command: redis-server --appendonly yes
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - paper-net
+
+  backend:
+    image: paper-backend:latest
+    container_name: paper-backend
+    restart: always
+    ports:
+      - "127.0.0.1:6039:6039"
+    environment:
+      TZ: Asia/Shanghai
+      SERVER_PORT: 6039
+      SPRING_PROFILES_ACTIVE: prod
+      # 数据源
+      SPRING_DATASOURCE_DYNAMIC_DATASOURCE_MASTER_URL: jdbc:mysql://mysql:3306/ai_sc?useUnicode=true&characterEncoding=utf8&zeroDateTimeBehavior=convertToNull&useSSL=false&serverTimezone=GMT%2B8&autoReconnect=true&rewriteBatchedStatements=true&allowPublicKeyRetrieval=true
+      SPRING_DATASOURCE_DYNAMIC_DATASOURCE_MASTER_USERNAME: root
+      SPRING_DATASOURCE_DYNAMIC_DATASOURCE_MASTER_PASSWORD: ${MYSQL_ROOT_PASSWORD:-Paper@2026Root}
+      # Redis
+      SPRING_DATA_REDIS_HOST: redis
+      SPRING_DATA_REDIS_PORT: 6379
+      SPRING_DATA_REDIS_DATABASE: 0
+      # 上传目录
+      SYS_UPLOAD_PATH: /ruoyi/upload
+      # 第三方登录回调
+      JUSTAUTH_ADDRESS: https://paper.xunmaw.com
+      LOGGING_LEVEL_ORG_RUOYI: info
+    volumes:
+      - backend-logs:/ruoyi/server/logs
+      - backend-upload:/ruoyi/upload
+    depends_on:
+      mysql:
+        condition: service_healthy
+      redis:
+        condition: service_started
+    networks:
+      - paper-net
+
+networks:
+  paper-net:
+    driver: bridge
+
+volumes:
+  mysql-data:
+  redis-data:
+  backend-logs:
+  backend-upload:

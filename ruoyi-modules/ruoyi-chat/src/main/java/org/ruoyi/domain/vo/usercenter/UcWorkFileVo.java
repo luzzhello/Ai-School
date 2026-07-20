@@ -26,6 +26,11 @@ public class UcWorkFileVo implements Serializable {
 
     private String fileType;
 
+    /**
+     * 软件工程图子类型（列表用摘要，来自 contentJson.diagramType；其它类型为空）
+     */
+    private String diagramType;
+
     private String thumbnail;
 
     private Long fileSize;

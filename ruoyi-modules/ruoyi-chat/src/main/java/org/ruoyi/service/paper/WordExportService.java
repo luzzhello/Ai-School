@@ -23,6 +23,7 @@ import org.openxmlformats.schemas.wordprocessingml.x2006.main.CTBorder;
 import org.openxmlformats.schemas.wordprocessingml.x2006.main.CTFonts;
 import org.openxmlformats.schemas.wordprocessingml.x2006.main.CTFldChar;
 import org.openxmlformats.schemas.wordprocessingml.x2006.main.CTHdrFtr;
+import org.openxmlformats.schemas.wordprocessingml.x2006.main.CTHdrFtrRef;
 import org.openxmlformats.schemas.wordprocessingml.x2006.main.CTInd;
 import org.openxmlformats.schemas.wordprocessingml.x2006.main.CTOnOff;
 import org.openxmlformats.schemas.wordprocessingml.x2006.main.CTPPr;
@@ -42,15 +43,25 @@ import org.openxmlformats.schemas.wordprocessingml.x2006.main.CTTabs;
 import org.openxmlformats.schemas.wordprocessingml.x2006.main.CTText;
 import org.openxmlformats.schemas.wordprocessingml.x2006.main.CTTbl;
 import org.openxmlformats.schemas.wordprocessingml.x2006.main.CTTblBorders;
+import org.openxmlformats.schemas.wordprocessingml.x2006.main.CTTblGrid;
+import org.openxmlformats.schemas.wordprocessingml.x2006.main.CTTblLayoutType;
 import org.openxmlformats.schemas.wordprocessingml.x2006.main.CTTblPr;
+import org.openxmlformats.schemas.wordprocessingml.x2006.main.CTTblWidth;
 import org.openxmlformats.schemas.wordprocessingml.x2006.main.CTTc;
 import org.openxmlformats.schemas.wordprocessingml.x2006.main.CTTcBorders;
+import org.openxmlformats.schemas.wordprocessingml.x2006.main.CTTcMar;
 import org.openxmlformats.schemas.wordprocessingml.x2006.main.CTTcPr;
+import org.openxmlformats.schemas.wordprocessingml.x2006.main.CTVerticalJc;
 import org.openxmlformats.schemas.wordprocessingml.x2006.main.STBorder;
 import org.openxmlformats.schemas.wordprocessingml.x2006.main.STFldCharType;
+import org.openxmlformats.schemas.wordprocessingml.x2006.main.STHdrFtr;
+import org.openxmlformats.schemas.wordprocessingml.x2006.main.STJc;
 import org.openxmlformats.schemas.wordprocessingml.x2006.main.STStyleType;
 import org.openxmlformats.schemas.wordprocessingml.x2006.main.STTabJc;
 import org.openxmlformats.schemas.wordprocessingml.x2006.main.STTabTlc;
+import org.openxmlformats.schemas.wordprocessingml.x2006.main.STTblLayoutType;
+import org.openxmlformats.schemas.wordprocessingml.x2006.main.STTblWidth;
+import org.openxmlformats.schemas.wordprocessingml.x2006.main.STVerticalJc;
 import org.ruoyi.common.core.exception.ServiceException;
 import org.ruoyi.common.core.utils.StringUtils;
 import org.ruoyi.domain.paper.PaperSession;
@@ -81,7 +92,8 @@ import java.util.regex.Pattern;
  * <p>
  * 读取会话目录与已生成内容，按大连海洋大学本科毕业论文（设计）版式组装 docx：
  * A4；左30/右25/上30/下25mm；正文五号宋体、固定行距18磅；标题黑体不加粗（一/二/三级）；
- * 页眉「大连海洋大学本科毕业论文（设计）」+题目；页脚居中页码（前置罗马、正文阿拉伯）；三线表。
+ * 不加固定页眉文案（学校名/题目由用户模板自行决定）；
+ * 页码从目录起编（章前罗马、第一章起阿拉伯），小五号宋体居中；三线表。
  * 对应 PRD「3.6 文档排版与导出模块」。
  */
 @Slf4j
@@ -89,14 +101,17 @@ import java.util.regex.Pattern;
 @RequiredArgsConstructor
 public class WordExportService {
 
+    /** 分节页码策略：无页码 / 罗马（目录） / 阿拉伯（正文） */
+    private enum PageNumberMode {
+        NONE,
+        ROMAN,
+        ARABIC
+    }
     private static final String FONT_BODY = "宋体";
     private static final String FONT_HEADING = "黑体";
     private static final String FONT_CODE = "Consolas";
     /** 英文 / 数字 / 表内西文 */
     private static final String FONT_TABLE = "Times New Roman";
-
-    /** 大连海洋大学本科毕业论文（设计）默认页眉左侧文案 */
-    private static final String HEADER_SCHOOL = "大连海洋大学本科毕业论文（设计）";
 
     /**
      * 字号（pt）：三号 16 / 小四 12 / 五号 10.5 / 小五 9 / 小二 18。
@@ -109,8 +124,7 @@ public class WordExportService {
     private static final double FONT_SIZE_H2 = 12;           // 小四
     private static final double FONT_SIZE_H3 = 10.5;         // 五号
     private static final double FONT_SIZE_CAPTION = 9;       // 小五（图/表题）
-    private static final double FONT_SIZE_HEADER = 9;        // 小五（页眉页脚）
-    private static final double FONT_SIZE_FOOTER = 9;
+    private static final double FONT_SIZE_FOOTER = 9;        // 小五（页脚）
     private static final double FONT_SIZE_TABLE = 10.5;      // 表内五号
     private static final int BODY_LINE_SPACING_TWIPS = 360;  // 18 磅
     /** 标题段前/段后约 1 行（twips） */
@@ -135,6 +149,15 @@ public class WordExportService {
     /** 正文区可用宽度（pt）：210−30−25=155mm */
     private static final int CONTENT_MAX_WIDTH_PT = 439;
     private static final int CONTENT_MAX_HEIGHT_PT = 620;
+    /** 表格可用宽度（twips）= 页宽 − 左右边距 */
+    private static final int TABLE_WIDTH_TWIPS = A4_WIDTH - MARGIN_LEFT - MARGIN_RIGHT;
+    /** 单元格左右内边距（twips），避免文字贴边 */
+    private static final int TABLE_CELL_PAD_TWIPS = 40;
+    /**
+     * 数据库表结构六列固定比例（%）：字段名称 / 类型 / 长度 / 允许空值 / 主键 / 备注。
+     * 短列给足宽度，避免「长度」「主键」被挤成一字一换行。
+     */
+    private static final int[] DB_TABLE_COL_PCT = {20, 14, 10, 14, 10, 32};
     /** 三线表：上下线 1.5 磅、中间线 0.5 磅（OOXML sz 单位为 1/8 磅） */
     private static final int THREE_LINE_OUTER = 12;
     private static final int THREE_LINE_INNER = 4;
@@ -158,6 +181,10 @@ public class WordExportService {
     private static final Pattern TABLE_CAPTION = Pattern.compile("^表\\s*\\d+[.\\-－]?\\d*.*");
     /** Markdown 图片：![图3-1 说明](data:image/png;base64,...) 或 URL */
     private static final Pattern MARKDOWN_IMAGE = Pattern.compile("^!\\[(.*?)]\\((.+?)\\)\\s*$");
+    /** 插图在线编辑元数据（正文内隐藏，导出 Word 须剥离） */
+    private static final Pattern PAPER_DRAW_INLINE = Pattern.compile(
+        "\\[\\[\\[PAPER_DRAW:\\{.*?\\}]]]|<<<PAPER_DRAW:\\{.*?\\}>>>|<!--\\s*paper-draw\\s+\\{.*?\\}\\s*-->",
+        Pattern.DOTALL);
     /** 摘要中英文分界 */
     private static final Pattern ABSTRACT_HEADER = Pattern.compile("(?im)^Abstract:?\\s*$");
     private static final Pattern ABSTRACT_LINE = Pattern.compile("(?im)^ABSTRACT\\s*$");
@@ -188,10 +215,13 @@ public class WordExportService {
             PaperTemplateStyleMapping templateStyles = paperTemplateService.getStyleMapping();
             exportTemplateStyles.set(templateStyles);
             applyDalianOceanPageSetup(doc);
-            applyHeaderAndFooter(doc, session.getTitle());
+            applyHeaderAndFooter(doc);
             patchTemplateStyles(doc);
             writeTitle(doc, session.getTitle(), templateStyles);
             writeBody(doc, session);
+            ensureBodySectionPageSetup(doc);
+            applyDocumentSettings(doc);
+            disableProofingOnAllRuns(doc);
             ByteArrayOutputStream out = new ByteArrayOutputStream();
             doc.write(out);
             return out.toByteArray();
@@ -218,7 +248,7 @@ public class WordExportService {
         try (XWPFDocument raw = new XWPFDocument(templateIn)) {
             resetHeaderFooters(raw);
             replaceBodyKeepSectionOnly(raw);
-            disableAutoFieldUpdate(raw);
+            applyDocumentSettings(raw);
             ByteArrayOutputStream buffer = new ByteArrayOutputStream();
             raw.write(buffer);
             return new XWPFDocument(new ByteArrayInputStream(buffer.toByteArray()));
@@ -236,8 +266,11 @@ public class WordExportService {
         doc.getDocument().setBody(freshBody);
     }
 
-    /** 禁止 Word 打开时自动更新域，避免残留 TOC 域被重新展开 */
-    private void disableAutoFieldUpdate(XWPFDocument doc) {
+    /**
+     * 文档级设置：禁止自动更新域；隐藏拼写/语法波浪线（Vue、MyBatis 等专有名词不再标红）。
+     * <p>poi-ooxml-lite 不含 STProof，故仅用 hideSpellingErrors / hideGrammaticalErrors（空元素即 true）。
+     */
+    private void applyDocumentSettings(XWPFDocument doc) {
         if (doc.getSettings() == null) {
             return;
         }
@@ -246,6 +279,65 @@ public class WordExportService {
             settings.getUpdateFields().setVal(false);
         } else {
             settings.addNewUpdateFields().setVal(false);
+        }
+        // 「仅在此文档中隐藏拼写/语法错误」——先清再加，覆盖模板中的 false
+        if (settings.isSetHideSpellingErrors()) {
+            settings.unsetHideSpellingErrors();
+        }
+        settings.addNewHideSpellingErrors();
+        if (settings.isSetHideGrammaticalErrors()) {
+            settings.unsetHideGrammaticalErrors();
+        }
+        settings.addNewHideGrammaticalErrors();
+    }
+
+    /**
+     * 为正文/表格/页眉页脚全部 run 写入 w:noProof，避免 Word/WPS 对 Vue、RESTful 等标红波浪线。
+     */
+    private void disableProofingOnAllRuns(XWPFDocument doc) {
+        for (XWPFParagraph paragraph : doc.getParagraphs()) {
+            disableProofingOnParagraph(paragraph);
+        }
+        for (XWPFTable table : doc.getTables()) {
+            disableProofingOnTable(table);
+        }
+        for (XWPFHeader header : doc.getHeaderList()) {
+            for (XWPFParagraph paragraph : header.getParagraphs()) {
+                disableProofingOnParagraph(paragraph);
+            }
+            for (XWPFTable table : header.getTables()) {
+                disableProofingOnTable(table);
+            }
+        }
+        for (XWPFFooter footer : doc.getFooterList()) {
+            for (XWPFParagraph paragraph : footer.getParagraphs()) {
+                disableProofingOnParagraph(paragraph);
+            }
+            for (XWPFTable table : footer.getTables()) {
+                disableProofingOnTable(table);
+            }
+        }
+    }
+
+    private void disableProofingOnTable(XWPFTable table) {
+        for (XWPFTableRow row : table.getRows()) {
+            for (XWPFTableCell cell : row.getTableCells()) {
+                for (XWPFParagraph paragraph : cell.getParagraphs()) {
+                    disableProofingOnParagraph(paragraph);
+                }
+                for (XWPFTable nested : cell.getTables()) {
+                    disableProofingOnTable(nested);
+                }
+            }
+        }
+    }
+
+    private void disableProofingOnParagraph(XWPFParagraph paragraph) {
+        for (XWPFRun run : paragraph.getRuns()) {
+            CTRPr rPr = run.getCTR().isSetRPr() ? run.getCTR().getRPr() : run.getCTR().addNewRPr();
+            if (rPr.sizeOfNoProofArray() == 0) {
+                rPr.addNewNoProof();
+            }
         }
     }
 
@@ -258,65 +350,80 @@ public class WordExportService {
         }
     }
 
-    /** 大连海洋大学版式：页边距 + 页眉/页脚距离 */
+    /** 大连海洋大学版式：页边距 + 页眉/页脚距离；文档末节默认正文阿拉伯页码从 1 起 */
     private void applyDalianOceanPageSetup(XWPFDocument doc) {
         CTSectPr sectPr = doc.getDocument().getBody().isSetSectPr()
             ? doc.getDocument().getBody().getSectPr()
             : doc.getDocument().getBody().addNewSectPr();
-        CTPageSz pageSz = sectPr.isSetPgSz() ? sectPr.getPgSz() : sectPr.addNewPgSz();
-        pageSz.setW(BigInteger.valueOf(A4_WIDTH));
-        pageSz.setH(BigInteger.valueOf(A4_HEIGHT));
-        CTPageMar mar = sectPr.isSetPgMar() ? sectPr.getPgMar() : sectPr.addNewPgMar();
-        mar.setLeft(BigInteger.valueOf(MARGIN_LEFT));
-        mar.setRight(BigInteger.valueOf(MARGIN_RIGHT));
-        mar.setTop(BigInteger.valueOf(MARGIN_TOP));
-        mar.setBottom(BigInteger.valueOf(MARGIN_BOTTOM));
-        mar.setHeader(BigInteger.valueOf(HEADER_DISTANCE));
-        mar.setFooter(BigInteger.valueOf(FOOTER_DISTANCE));
-        // 前置部分（摘要/目录）用罗马数字页码，正文分节后改为阿拉伯数字
-        CTPageNumber pgNum = sectPr.isSetPgNumType() ? sectPr.getPgNumType() : sectPr.addNewPgNumType();
-        pgNum.setFmt(STNumberFormat.UPPER_ROMAN);
-        pgNum.setStart(BigInteger.ONE);
+        applyPageGeometry(sectPr);
+        // body/sectPr 对应最后一节（第一章起正文）
+        applyPageNumberFormat(sectPr, PageNumberMode.ARABIC);
     }
 
-    /** 页眉：左学校名、右论文题目；页脚居中页码（小五宋体） */
-    private void applyHeaderAndFooter(XWPFDocument doc, String paperTitle) {
+    /**
+     * 页眉清空；为末节（正文）挂载阿拉伯页码页脚。
+     * 目录节页脚在写入目录分节时挂载；摘要等前置节不挂页码。
+     */
+    private void applyHeaderAndFooter(XWPFDocument doc) {
         resetHeaderFooters(doc);
-        XWPFHeader header = doc.createHeader(HeaderFooterType.DEFAULT);
-        XWPFParagraph headerPara = header.createParagraph();
-        headerPara.setAlignment(ParagraphAlignment.LEFT);
-        CTPPr pPr = headerPara.getCTP().isSetPPr() ? headerPara.getCTP().getPPr() : headerPara.getCTP().addNewPPr();
-        if (pPr.isSetTabs()) {
-            pPr.unsetTabs();
-        }
-        CTTabs tabs = pPr.addNewTabs();
-        CTTabStop rightTab = tabs.addNewTab();
-        rightTab.setVal(STTabJc.RIGHT);
-        rightTab.setPos(BigInteger.valueOf(TOC_TAB_POS));
-
-        XWPFRun left = headerPara.createRun();
-        applyFont(left, FONT_BODY, FONT_SIZE_HEADER);
-        left.setText(HEADER_SCHOOL);
-        XWPFRun tabRun = headerPara.createRun();
-        tabRun.addTab();
-        XWPFRun right = headerPara.createRun();
-        applyFont(right, FONT_BODY, FONT_SIZE_HEADER);
-        right.setText(StringUtils.isBlank(paperTitle) ? "" : paperTitle.trim());
-
-        ensureFooterPageNumber(doc, HeaderFooterType.DEFAULT, false);
-        CTSectPr sectPr = doc.getDocument().getBody().isSetSectPr()
+        XWPFFooter bodyFooter = createPageNumberFooter(doc, true);
+        CTSectPr bodySectPr = doc.getDocument().getBody().isSetSectPr()
             ? doc.getDocument().getBody().getSectPr()
-            : null;
-        if (sectPr != null && sectPr.isSetTitlePg()) {
-            ensureFooterPageNumber(doc, HeaderFooterType.FIRST, false);
-        }
+            : doc.getDocument().getBody().addNewSectPr();
+        attachFooter(doc, bodySectPr, bodyFooter);
     }
 
-    private void ensureFooterPageNumber(XWPFDocument doc, HeaderFooterType type, boolean arabic) {
-        XWPFFooter footer = doc.createFooter(type);
+    /** 创建小五号宋体、居中的 PAGE 域页脚 */
+    private XWPFFooter createPageNumberFooter(XWPFDocument doc, boolean arabicPlaceholder) {
+        XWPFFooter footer = doc.createFooter(HeaderFooterType.DEFAULT);
+        footer.clearHeaderFooter();
         XWPFParagraph para = footer.createParagraph();
         para.setAlignment(ParagraphAlignment.CENTER);
-        appendPageNumberField(para, arabic);
+        para.setSpacingBefore(0);
+        para.setSpacingAfter(0);
+        appendPageNumberField(para, arabicPlaceholder);
+        return footer;
+    }
+
+    /** 空页脚（摘要等前置页不显示页码） */
+    private XWPFFooter createEmptyFooter(XWPFDocument doc) {
+        XWPFFooter footer = doc.createFooter(HeaderFooterType.DEFAULT);
+        footer.clearHeaderFooter();
+        footer.createParagraph();
+        return footer;
+    }
+
+    /** 导出末尾再次锁定正文节：阿拉伯数字从 1、小五宋体页脚（避免中途 createFooter 改写末节引用） */
+    private void ensureBodySectionPageSetup(XWPFDocument doc) {
+        CTSectPr bodySectPr = doc.getDocument().getBody().isSetSectPr()
+            ? doc.getDocument().getBody().getSectPr()
+            : doc.getDocument().getBody().addNewSectPr();
+        applyPageGeometry(bodySectPr);
+        applyPageNumberFormat(bodySectPr, PageNumberMode.ARABIC);
+        if (bodySectPr.isSetTitlePg()) {
+            bodySectPr.unsetTitlePg();
+        }
+        attachFooter(doc, bodySectPr, createPageNumberFooter(doc, true));
+    }
+
+    private void attachFooter(XWPFDocument doc, CTSectPr sectPr, XWPFFooter footer) {
+        if (sectPr == null || footer == null) {
+            return;
+        }
+        // 去掉原 DEFAULT 页脚引用，避免多节串页脚
+        for (int i = sectPr.sizeOfFooterReferenceArray() - 1; i >= 0; i--) {
+            CTHdrFtrRef ref = sectPr.getFooterReferenceArray(i);
+            if (ref.getType() == STHdrFtr.DEFAULT) {
+                sectPr.removeFooterReference(i);
+            }
+        }
+        String relId = doc.getRelationId(footer);
+        if (StringUtils.isBlank(relId)) {
+            return;
+        }
+        CTHdrFtrRef ref = sectPr.addNewFooterReference();
+        ref.setType(STHdrFtr.DEFAULT);
+        ref.setId(relId);
     }
 
     private void appendPageNumberField(XWPFParagraph paragraph, boolean arabic) {
@@ -328,7 +435,7 @@ public class WordExportService {
         begin.setFldCharType(STFldCharType.BEGIN);
 
         CTText instr = ctr.addNewInstrText();
-        // 节属性决定罗马/阿拉伯；域本身用 PAGE
+        // 格式由节属性 pgNumType 决定；域本身只用 PAGE
         instr.setStringValue(" PAGE ");
 
         CTFldChar separate = ctr.addNewFldChar();
@@ -338,6 +445,35 @@ public class WordExportService {
 
         CTFldChar end = ctr.addNewFldChar();
         end.setFldCharType(STFldCharType.END);
+    }
+
+    private void applyPageGeometry(CTSectPr sectPr) {
+        CTPageSz pageSz = sectPr.isSetPgSz() ? sectPr.getPgSz() : sectPr.addNewPgSz();
+        pageSz.setW(BigInteger.valueOf(A4_WIDTH));
+        pageSz.setH(BigInteger.valueOf(A4_HEIGHT));
+        CTPageMar mar = sectPr.isSetPgMar() ? sectPr.getPgMar() : sectPr.addNewPgMar();
+        mar.setLeft(BigInteger.valueOf(MARGIN_LEFT));
+        mar.setRight(BigInteger.valueOf(MARGIN_RIGHT));
+        mar.setTop(BigInteger.valueOf(MARGIN_TOP));
+        mar.setBottom(BigInteger.valueOf(MARGIN_BOTTOM));
+        mar.setHeader(BigInteger.valueOf(HEADER_DISTANCE));
+        mar.setFooter(BigInteger.valueOf(FOOTER_DISTANCE));
+    }
+
+    private void applyPageNumberFormat(CTSectPr sectPr, PageNumberMode mode) {
+        if (mode == PageNumberMode.NONE) {
+            if (sectPr.isSetPgNumType()) {
+                sectPr.unsetPgNumType();
+            }
+            return;
+        }
+        CTPageNumber pgNum = sectPr.isSetPgNumType() ? sectPr.getPgNumType() : sectPr.addNewPgNumType();
+        if (mode == PageNumberMode.ROMAN) {
+            pgNum.setFmt(STNumberFormat.UPPER_ROMAN);
+        } else {
+            pgNum.setFmt(STNumberFormat.DECIMAL);
+        }
+        pgNum.setStart(BigInteger.ONE);
     }
 
     /**
@@ -352,6 +488,11 @@ public class WordExportService {
         patchStyleFont(doc, mapping.getNormal(), FONT_BODY, FONT_SIZE_BODY, false);
         patchStyleFirstLineIndent(doc, mapping.getNormal());
         patchStyleFont(doc, mapping.getReference(), FONT_BODY, FONT_SIZE_BODY, false);
+        // 参考文献禁止两端/分散对齐，否则短行会被 Word 拉大字距
+        patchStyleAlignment(doc, mapping.getReference(), STJc.LEFT);
+        // 模板「参考文献」样式自带自动编号 lvlText=[%1]，与正文手写 [n] 叠成 [1][1]
+        patchStyleClearNumbering(doc, mapping.getReference());
+        patchStyleClearIndent(doc, mapping.getReference());
         // 规范：标题黑体不加粗
         patchStyleFont(doc, mapping.getHeading1(), FONT_HEADING, FONT_SIZE_H1, false);
         patchStyleFont(doc, mapping.getHeading2(), FONT_HEADING, FONT_SIZE_H2, false);
@@ -409,6 +550,78 @@ public class WordExportService {
             }
         } else if (rPr.sizeOfBArray() > 0) {
             rPr.getBArray(0).setVal(false);
+        }
+    }
+
+    /** 覆盖模板段落对齐（参考文献忌用两端/分散对齐） */
+    private void patchStyleAlignment(XWPFDocument doc, String styleId, STJc.Enum alignment) {
+        if (StringUtils.isBlank(styleId) || alignment == null) {
+            return;
+        }
+        XWPFStyles styles = doc.getStyles();
+        if (styles == null) {
+            return;
+        }
+        XWPFStyle style = styles.getStyle(styleId);
+        if (style == null || style.getCTStyle() == null) {
+            return;
+        }
+        CTPPrGeneral pPr = style.getCTStyle().isSetPPr()
+            ? style.getCTStyle().getPPr()
+            : style.getCTStyle().addNewPPr();
+        if (pPr.isSetJc()) {
+            pPr.getJc().setVal(alignment);
+        } else {
+            pPr.addNewJc().setVal(alignment);
+        }
+    }
+
+    /** 去掉样式上的自动编号（参考文献序号改由正文文本写入） */
+    private void patchStyleClearNumbering(XWPFDocument doc, String styleId) {
+        if (StringUtils.isBlank(styleId)) {
+            return;
+        }
+        XWPFStyles styles = doc.getStyles();
+        if (styles == null) {
+            return;
+        }
+        XWPFStyle style = styles.getStyle(styleId);
+        if (style == null || style.getCTStyle() == null) {
+            return;
+        }
+        CTPPrGeneral pPr = style.getCTStyle().isSetPPr()
+            ? style.getCTStyle().getPPr()
+            : style.getCTStyle().addNewPPr();
+        if (pPr.isSetNumPr()) {
+            pPr.unsetNumPr();
+        }
+    }
+
+    /** 清除样式缩进，保证参考文献序号左顶格 */
+    private void patchStyleClearIndent(XWPFDocument doc, String styleId) {
+        if (StringUtils.isBlank(styleId)) {
+            return;
+        }
+        XWPFStyles styles = doc.getStyles();
+        if (styles == null) {
+            return;
+        }
+        XWPFStyle style = styles.getStyle(styleId);
+        if (style == null || style.getCTStyle() == null) {
+            return;
+        }
+        CTPPrGeneral pPr = style.getCTStyle().isSetPPr()
+            ? style.getCTStyle().getPPr()
+            : style.getCTStyle().addNewPPr();
+        CTInd ind = pPr.isSetInd() ? pPr.getInd() : pPr.addNewInd();
+        ind.setLeft(BigInteger.ZERO);
+        ind.setFirstLine(BigInteger.ZERO);
+        ind.setFirstLineChars(BigInteger.ZERO);
+        if (ind.isSetHanging()) {
+            ind.unsetHanging();
+        }
+        if (ind.isSetHangingChars()) {
+            ind.unsetHangingChars();
         }
     }
 
@@ -933,13 +1146,17 @@ public class WordExportService {
         } else {
             if (isReferenceNode(node)) {
                 addSectionTitle(doc, title);
+                // 与预览一致：优先用参考文献章节正文；无正文时再回退结构化列表
+                if (StringUtils.isNotBlank(content) && !isReferencePlaceholder(content)) {
+                    renderReferenceContent(doc, content);
+                } else if (session.getReferences() != null && !session.getReferences().isEmpty()) {
+                    renderReferences(doc, session.getReferences());
+                }
             } else {
                 addHeading(doc, title, level);
-            }
-            if (StringUtils.isBlank(content) && isReferenceNode(node)) {
-                renderReferences(doc, session.getReferences());
-            } else if (StringUtils.isNotBlank(content)) {
-                renderContent(doc, content);
+                if (StringUtils.isNotBlank(content)) {
+                    renderContent(doc, content);
+                }
             }
         }
 
@@ -954,6 +1171,12 @@ public class WordExportService {
         String id = node.getId() == null ? "" : node.getId().toLowerCase();
         String title = node.getTitle() == null ? "" : node.getTitle();
         return id.contains("reference") || title.contains("参考文献");
+    }
+
+    /** 占位提示不算有效参考文献正文 */
+    private boolean isReferencePlaceholder(String content) {
+        String t = content == null ? "" : content.strip();
+        return t.isEmpty() || t.contains("暂无参考文献");
     }
 
     private boolean isAbstractNode(TocNode node) {
@@ -975,10 +1198,13 @@ public class WordExportService {
     }
 
     /**
-     * 摘要之后插入目录页：居中标题 + 静态目录（点线引导符 + 估算页码，无需更新域）。
+     * 摘要之后插入目录页。
+     * <p>Word 节属性写在「本节末尾」：先结束前置节（无页码），再写目录，再结束目录节（罗马数字从 I 起）；
+     * 文档末节（body/sectPr）为正文阿拉伯数字从 1 起。
      */
     private void writeTableOfContentsPage(XWPFDocument doc, List<TocNode> toc, Map<String, Integer> headingPages) {
-        addPageBreak(doc);
+        // 结束题目/摘要节：不编页码；下一页起为目录
+        addSectionBreak(doc, PageNumberMode.NONE, false);
 
         XWPFParagraph titlePara = doc.createParagraph();
         titlePara.setAlignment(ParagraphAlignment.CENTER);
@@ -992,12 +1218,17 @@ public class WordExportService {
             appendStaticTocEntry(doc, node, headingPages);
         }
 
-        // 目录之后进入正文：新节 + 阿拉伯数字页码从 1 起
-        addBodySectionBreak(doc);
+        // 结束目录节：罗马数字从 I 起；下一页起第一章（阿拉伯）
+        addSectionBreak(doc, PageNumberMode.ROMAN, true);
     }
 
-    /** 正文分节：页码改为阿拉伯数字并从 1 重新编号 */
-    private void addBodySectionBreak(XWPFDocument doc) {
+    /**
+     * 插入下一页分节符。sectPr 描述的是「即将结束的本节」，不是下一节。
+     *
+     * @param mode           本节页码格式
+     * @param withPageFooter 本节是否显示页码页脚
+     */
+    private void addSectionBreak(XWPFDocument doc, PageNumberMode mode, boolean withPageFooter) {
         XWPFParagraph p = doc.createParagraph();
         CTPPr pPr = p.getCTP().isSetPPr() ? p.getCTP().getPPr() : p.getCTP().addNewPPr();
         CTSectPr sectPr = pPr.isSetSectPr() ? pPr.getSectPr() : pPr.addNewSectPr();
@@ -1006,19 +1237,13 @@ public class WordExportService {
         } else {
             sectPr.addNewType().setVal(STSectionMark.NEXT_PAGE);
         }
-        CTPageSz pageSz = sectPr.isSetPgSz() ? sectPr.getPgSz() : sectPr.addNewPgSz();
-        pageSz.setW(BigInteger.valueOf(A4_WIDTH));
-        pageSz.setH(BigInteger.valueOf(A4_HEIGHT));
-        CTPageMar mar = sectPr.isSetPgMar() ? sectPr.getPgMar() : sectPr.addNewPgMar();
-        mar.setLeft(BigInteger.valueOf(MARGIN_LEFT));
-        mar.setRight(BigInteger.valueOf(MARGIN_RIGHT));
-        mar.setTop(BigInteger.valueOf(MARGIN_TOP));
-        mar.setBottom(BigInteger.valueOf(MARGIN_BOTTOM));
-        mar.setHeader(BigInteger.valueOf(HEADER_DISTANCE));
-        mar.setFooter(BigInteger.valueOf(FOOTER_DISTANCE));
-        CTPageNumber pgNum = sectPr.isSetPgNumType() ? sectPr.getPgNumType() : sectPr.addNewPgNumType();
-        pgNum.setFmt(STNumberFormat.DECIMAL);
-        pgNum.setStart(BigInteger.ONE);
+        applyPageGeometry(sectPr);
+        applyPageNumberFormat(sectPr, mode);
+        if (withPageFooter) {
+            attachFooter(doc, sectPr, createPageNumberFooter(doc, mode == PageNumberMode.ARABIC));
+        } else {
+            attachFooter(doc, sectPr, createEmptyFooter(doc));
+        }
     }
 
     private void appendStaticTocEntry(XWPFDocument doc, TocNode node, Map<String, Integer> headingPages) {
@@ -1087,26 +1312,155 @@ public class WordExportService {
     }
 
     /**
-     * 渲染参考文献列表（GB/T 7714，悬挂式编号）。
+     * 渲染参考文献列表（GB/T 7714，左对齐 + 悬挂缩进）。
+     * 禁止两端对齐/分散对齐，否则换行后的短行会被 Word 拉大字距。
      */
     private void renderReferences(XWPFDocument doc, List<Reference> references) {
         if (references == null || references.isEmpty()) {
             return;
         }
         PaperTemplateStyleMapping templateStyles = currentTemplateStyles();
+        int seq = 1;
         for (Reference ref : references) {
-            XWPFParagraph p = doc.createParagraph();
-            if (templateStyles != null && StringUtils.isNotBlank(templateStyles.getReference())) {
-                p.setStyle(templateStyles.getReference());
-            } else {
-                p.setSpacingBetween(1.5, LineSpacingRule.AUTO);
-            }
-            XWPFRun run = p.createRun();
-            applyFont(run, FONT_BODY, FONT_SIZE_BODY);
-            String text = "[" + (ref.getIndex() == null ? "" : ref.getIndex()) + "] "
-                + (StringUtils.isNotBlank(ref.getCitation()) ? ref.getCitation() : "");
-            run.setText(text);
+            addReferenceParagraph(doc, formatReferenceExportLine(ref, seq++), templateStyles);
         }
+    }
+
+    /** 统一「[n] + 题录」；若 citation 已含序号则先剥掉，避免与外层序号叠层 */
+    private String formatReferenceExportLine(Reference ref, int sequentialIndex) {
+        String body = StringUtils.isNotBlank(ref.getCitation()) ? ref.getCitation().trim() : "";
+        body = stripLeadingReferenceIndex(body);
+        return "[" + sequentialIndex + "] " + body;
+    }
+
+    private static final Pattern LEADING_REF_INDEX = Pattern.compile("^\\[\\s*\\d+\\s*]\\s*");
+    /** 预览/脏数据可能把多条文献挤成一行，按 [n] 边界切分 */
+    private static final Pattern REF_ENTRY_SPLIT = Pattern.compile("(?=\\[\\s*\\d+\\s*])");
+
+    static String stripLeadingReferenceIndex(String text) {
+        if (StringUtils.isBlank(text)) {
+            return "";
+        }
+        String s = text.trim();
+        // 连续前缀也清掉（历史脏数据 [1] [1] 作者…）
+        while (true) {
+            var m = LEADING_REF_INDEX.matcher(s);
+            if (!m.find()) {
+                break;
+            }
+            s = s.substring(m.end()).trim();
+        }
+        return s;
+    }
+
+    /** 从章节正文文本渲染参考文献（与预览同源） */
+    private void renderReferenceContent(XWPFDocument doc, String text) {
+        if (StringUtils.isBlank(text)) {
+            return;
+        }
+        PaperTemplateStyleMapping templateStyles = currentTemplateStyles();
+        int autoIndex = 1;
+        for (String entry : splitReferenceEntries(text)) {
+            String trim = entry.strip();
+            if (trim.isEmpty() || isReferencePlaceholder(trim)) {
+                continue;
+            }
+            if (trim.startsWith("（") || trim.startsWith("(")) {
+                continue;
+            }
+            String body = stripLeadingReferenceIndex(stripMarkdown(trim));
+            if (body.isEmpty()) {
+                continue;
+            }
+            addReferenceParagraph(doc, "[" + (autoIndex++) + "] " + body, templateStyles);
+        }
+    }
+
+    /** 按换行切分；若挤成一行则按 [n] 边界再切 */
+    private static List<String> splitReferenceEntries(String text) {
+        List<String> entries = new ArrayList<>();
+        String normalized = text.replace("\r\n", "\n").replace("\r", "\n");
+        for (String line : normalized.split("\n")) {
+            String trim = line.strip();
+            if (trim.isEmpty()) {
+                continue;
+            }
+            if (countLeadingRefMarkers(trim) <= 1) {
+                entries.add(trim);
+                continue;
+            }
+            for (String part : REF_ENTRY_SPLIT.split(trim)) {
+                if (StringUtils.isNotBlank(part)) {
+                    entries.add(part.strip());
+                }
+            }
+        }
+        return entries;
+    }
+
+    private static int countLeadingRefMarkers(String text) {
+        Matcher m = Pattern.compile("\\[\\s*\\d+\\s*]").matcher(text);
+        int count = 0;
+        while (m.find()) {
+            count++;
+        }
+        return count;
+    }
+
+    private void addReferenceParagraph(XWPFDocument doc, String text, PaperTemplateStyleMapping templateStyles) {
+        if (StringUtils.isBlank(text)) {
+            return;
+        }
+        XWPFParagraph p = doc.createParagraph();
+        // 不用模板「参考文献」样式：该样式与 numbering lvlText=[%1] 双向绑定，套用会再出一层序号
+        if (templateStyles != null && StringUtils.isNotBlank(templateStyles.getNormal())) {
+            p.setStyle(templateStyles.getNormal());
+        }
+        applyReferenceParagraphLayout(p);
+        XWPFRun run = p.createRun();
+        applyFont(run, FONT_BODY, FONT_SIZE_BODY);
+        run.setText(text);
+    }
+
+    private void applyReferenceParagraphLayout(XWPFParagraph paragraph) {
+        paragraph.setAlignment(ParagraphAlignment.LEFT);
+        paragraph.setSpacingBetween(BODY_LINE_SPACING_TWIPS / 20.0, LineSpacingRule.EXACT);
+        paragraph.setSpacingBefore(0);
+        paragraph.setSpacingAfter(0);
+        CTPPr pPr = paragraph.getCTP().isSetPPr()
+            ? paragraph.getCTP().getPPr()
+            : paragraph.getCTP().addNewPPr();
+        // numId=0：显式关闭自动编号（仅 unset 时 Word 仍可能因样式关联补回）
+        if (pPr.isSetNumPr()) {
+            pPr.unsetNumPr();
+        }
+        var numPr = pPr.addNewNumPr();
+        numPr.addNewIlvl().setVal(BigInteger.ZERO);
+        numPr.addNewNumId().setVal(BigInteger.ZERO);
+        if (pPr.isSetJc()) {
+            pPr.getJc().setVal(STJc.LEFT);
+        } else {
+            pPr.addNewJc().setVal(STJc.LEFT);
+        }
+        CTInd ind = pPr.isSetInd() ? pPr.getInd() : pPr.addNewInd();
+        // 序号左顶格：清除模板/正文带来的左缩进与首行缩进
+        ind.setLeft(BigInteger.ZERO);
+        ind.setRight(BigInteger.ZERO);
+        if (ind.isSetFirstLine()) {
+            ind.unsetFirstLine();
+        }
+        if (ind.isSetFirstLineChars()) {
+            ind.unsetFirstLineChars();
+        }
+        if (ind.isSetHanging()) {
+            ind.unsetHanging();
+        }
+        if (ind.isSetHangingChars()) {
+            ind.unsetHangingChars();
+        }
+        // 显式 firstLine=0，防止继承样式仍缩进
+        ind.setFirstLine(BigInteger.ZERO);
+        ind.setFirstLineChars(BigInteger.ZERO);
     }
 
     /**
@@ -1127,6 +1481,12 @@ public class WordExportService {
             if (mdImg.matches()) {
                 addImageFromSrc(doc, mdImg.group(2).trim(), mdImg.group(1).trim());
                 i++;
+                continue;
+            }
+
+            // 跳过插图编辑元数据（[[[PAPER_DRAW:...]]] 等），勿写入 Word
+            if (isPaperDrawMarkerStart(trim)) {
+                i = skipPaperDrawMarker(lines, i);
                 continue;
             }
 
@@ -1605,8 +1965,8 @@ public class WordExportService {
         int rowCount = rows.size();
         boolean thesisGrid = isDbStructureTable(rows.get(0));
         int remarkCol = thesisGrid ? findRemarkColumnIndex(rows.get(0)) : -1;
+        int[] colWidths = resolveTableColumnWidths(rows, cols, thesisGrid);
         XWPFTable table = doc.createTable(rowCount, cols);
-        table.setWidth("100%");
         for (int r = 0; r < rowCount; r++) {
             String[] cells = rows.get(r);
             XWPFTableRow row = table.getRow(r);
@@ -1616,9 +1976,117 @@ public class WordExportService {
                 setCellText(cell, stripMarkdown(val), r == 0, thesisGrid && c == remarkCol, thesisGrid);
             }
         }
-        // 文中表格均采用三线表
+        // 文中表格均采用三线表；固定列宽避免 Word 自动挤窄短列
         finalizeThesisDbTable(table, rowCount, cols);
+        applyFixedTableColumnWidths(table, colWidths);
         doc.createParagraph();
+    }
+
+    /** 数据库六列表用固定比例；其余按表头/内容估算，并保证表头汉字不纵向拆字 */
+    private int[] resolveTableColumnWidths(List<String[]> rows, int cols, boolean thesisGrid) {
+        if (thesisGrid && cols == DB_TABLE_COL_PCT.length) {
+            return percentToTwips(DB_TABLE_COL_PCT, TABLE_WIDTH_TWIPS);
+        }
+        int[] weights = new int[cols];
+        for (int c = 0; c < cols; c++) {
+            int max = 2;
+            for (String[] row : rows) {
+                if (c < row.length && row[c] != null) {
+                    max = Math.max(max, estimateDisplayWidth(row[c]));
+                }
+            }
+            // 表头至少按汉字宽度留空，防止「长度」「主键」被挤成一字一换行
+            weights[c] = Math.max(max, 4);
+        }
+        return weightToTwips(weights, TABLE_WIDTH_TWIPS);
+    }
+
+    /** 粗估显示宽度：中文≈2、英文/数字≈1 */
+    private int estimateDisplayWidth(String text) {
+        int w = 0;
+        for (int i = 0; i < text.length(); i++) {
+            char ch = text.charAt(i);
+            w += ch > 0x7F ? 2 : 1;
+        }
+        return Math.max(w, 1);
+    }
+
+    private int[] percentToTwips(int[] percents, int totalTwips) {
+        int[] widths = new int[percents.length];
+        int used = 0;
+        for (int i = 0; i < percents.length; i++) {
+            if (i == percents.length - 1) {
+                widths[i] = Math.max(totalTwips - used, 1);
+            } else {
+                widths[i] = Math.max(totalTwips * percents[i] / 100, 1);
+                used += widths[i];
+            }
+        }
+        return widths;
+    }
+
+    private int[] weightToTwips(int[] weights, int totalTwips) {
+        int sum = 0;
+        for (int w : weights) {
+            sum += w;
+        }
+        if (sum <= 0) {
+            sum = weights.length;
+            for (int i = 0; i < weights.length; i++) {
+                weights[i] = 1;
+            }
+        }
+        int[] widths = new int[weights.length];
+        int used = 0;
+        for (int i = 0; i < weights.length; i++) {
+            if (i == weights.length - 1) {
+                widths[i] = Math.max(totalTwips - used, 1);
+            } else {
+                widths[i] = Math.max(totalTwips * weights[i] / sum, 1);
+                used += widths[i];
+            }
+        }
+        return widths;
+    }
+
+    /** 固定表格总宽 + 列宽（tblGrid / tcW），禁止 Word autofit 挤窄短列 */
+    private void applyFixedTableColumnWidths(XWPFTable table, int[] colWidths) {
+        if (table == null || colWidths == null || colWidths.length == 0) {
+            return;
+        }
+        CTTbl ctTbl = table.getCTTbl();
+        CTTblPr tblPr = ctTbl.getTblPr() != null ? ctTbl.getTblPr() : ctTbl.addNewTblPr();
+        CTTblWidth tblW = tblPr.isSetTblW() ? tblPr.getTblW() : tblPr.addNewTblW();
+        tblW.setType(STTblWidth.DXA);
+        tblW.setW(BigInteger.valueOf(TABLE_WIDTH_TWIPS));
+
+        CTTblLayoutType layout = tblPr.isSetTblLayout() ? tblPr.getTblLayout() : tblPr.addNewTblLayout();
+        layout.setType(STTblLayoutType.FIXED);
+
+        CTTblGrid grid = ctTbl.getTblGrid() != null ? ctTbl.getTblGrid() : ctTbl.addNewTblGrid();
+        while (grid.sizeOfGridColArray() > 0) {
+            grid.removeGridCol(0);
+        }
+        for (int width : colWidths) {
+            grid.addNewGridCol().setW(BigInteger.valueOf(width));
+        }
+
+        for (XWPFTableRow row : table.getRows()) {
+            int cellCount = Math.min(row.getTableCells().size(), colWidths.length);
+            for (int c = 0; c < cellCount; c++) {
+                setCellWidth(row.getCell(c), colWidths[c]);
+            }
+        }
+    }
+
+    private void setCellWidth(XWPFTableCell cell, int widthTwips) {
+        if (cell == null) {
+            return;
+        }
+        CTTcPr tcPr = cell.getCTTc().isSetTcPr() ? cell.getCTTc().getTcPr() : cell.getCTTc().addNewTcPr();
+        CTTblWidth tcW = tcPr.isSetTcW() ? tcPr.getTcW() : tcPr.addNewTcW();
+        tcW.setType(STTblWidth.DXA);
+        tcW.setW(BigInteger.valueOf(widthTwips));
     }
 
     /** 数据库表结构（字段名称/类型/长度/允许空值/主键/备注） */
@@ -1771,15 +2239,53 @@ public class WordExportService {
         }
         cell.removeParagraph(0);
         XWPFParagraph p = cell.addParagraph();
+        // 禁止继承正文「首行缩进 2 字符」，否则居中看起来偏右/不齐
+        clearParagraphIndent(p);
         p.setAlignment(remarkColumn && !header ? ParagraphAlignment.LEFT : ParagraphAlignment.CENTER);
         p.setSpacingBetween(1.0, LineSpacingRule.AUTO);
         p.setSpacingBefore(0);
         p.setSpacingAfter(0);
+
+        CTTcPr tcPr = cell.getCTTc().isSetTcPr() ? cell.getCTTc().getTcPr() : cell.getCTTc().addNewTcPr();
+        CTVerticalJc vJc = tcPr.isSetVAlign() ? tcPr.getVAlign() : tcPr.addNewVAlign();
+        vJc.setVal(STVerticalJc.CENTER);
+        applyCellPadding(tcPr);
+
         XWPFRun run = p.createRun();
         // 表内：中文宋体五号，英文/数字 Times New Roman 五号
         applyFont(run, FONT_BODY, FONT_SIZE_TABLE);
         run.setBold(false);
-        run.setText(text);
+        run.setText(text == null ? "" : text);
+    }
+
+    /** 清除段落缩进（含字符单位），避免表内文字受正文样式影响 */
+    private void clearParagraphIndent(XWPFParagraph p) {
+        p.setIndentationFirstLine(0);
+        p.setIndentationLeft(0);
+        p.setIndentationRight(0);
+        p.setIndentationHanging(0);
+        CTPPr pPr = p.getCTP().isSetPPr() ? p.getCTP().getPPr() : p.getCTP().addNewPPr();
+        if (pPr.isSetInd()) {
+            pPr.unsetInd();
+        }
+        CTInd ind = pPr.addNewInd();
+        ind.setFirstLine(BigInteger.ZERO);
+        ind.setFirstLineChars(BigInteger.ZERO);
+        ind.setLeft(BigInteger.ZERO);
+        ind.setRight(BigInteger.ZERO);
+    }
+
+    private void applyCellPadding(CTTcPr tcPr) {
+        CTTcMar mar = tcPr.isSetTcMar() ? tcPr.getTcMar() : tcPr.addNewTcMar();
+        setTblWidthDxa(mar.isSetLeft() ? mar.getLeft() : mar.addNewLeft(), TABLE_CELL_PAD_TWIPS);
+        setTblWidthDxa(mar.isSetRight() ? mar.getRight() : mar.addNewRight(), TABLE_CELL_PAD_TWIPS);
+        setTblWidthDxa(mar.isSetTop() ? mar.getTop() : mar.addNewTop(), TABLE_CELL_PAD_TWIPS);
+        setTblWidthDxa(mar.isSetBottom() ? mar.getBottom() : mar.addNewBottom(), TABLE_CELL_PAD_TWIPS);
+    }
+
+    private void setTblWidthDxa(CTTblWidth width, int twips) {
+        width.setType(STTblWidth.DXA);
+        width.setW(BigInteger.valueOf(twips));
     }
 
     // ---------------- 工具 ----------------
@@ -1822,10 +2328,50 @@ public class WordExportService {
      */
     private String stripMarkdown(String text) {
         String t = text;
+        t = PAPER_DRAW_INLINE.matcher(t).replaceAll("");
         t = t.replaceAll("^#{1,6}\\s*", "");
         t = t.replace("**", "").replace("__", "");
         t = t.replaceAll("^[*\\-]\\s+", "• ");
-        return t;
+        return t.trim();
+    }
+
+    /** 行是否为 paper-draw 元数据起始（含 XSS 剥残后的 <<>>） */
+    private static boolean isPaperDrawMarkerStart(String trim) {
+        if (trim.isEmpty()) {
+            return false;
+        }
+        if ("<<>>".equals(trim)) {
+            return true;
+        }
+        return trim.startsWith("[[[PAPER_DRAW:")
+            || trim.startsWith("<<<PAPER_DRAW:")
+            || (trim.startsWith("<!--") && trim.contains("paper-draw"));
+    }
+
+    /** 跳过单行或多行 paper-draw 标记，返回下一行下标 */
+    private static int skipPaperDrawMarker(String[] lines, int start) {
+        String first = lines[start].strip();
+        if ("<<>>".equals(first)
+            || (first.startsWith("[[[PAPER_DRAW:") && first.contains("]]]"))
+            || (first.startsWith("<<<PAPER_DRAW:") && first.contains(">>>"))
+            || (first.startsWith("<!--") && first.contains("-->"))) {
+            return start + 1;
+        }
+        int i = start + 1;
+        while (i < lines.length && i - start < 30) {
+            String t = lines[i].strip();
+            if (first.startsWith("[[[") && t.contains("]]]")) {
+                return i + 1;
+            }
+            if (first.startsWith("<<<") && t.contains(">>>")) {
+                return i + 1;
+            }
+            if (first.startsWith("<!--") && t.contains("-->")) {
+                return i + 1;
+            }
+            i++;
+        }
+        return Math.min(start + 1, lines.length);
     }
 
     private void applyFont(XWPFRun run, String family, double size) {
@@ -1836,7 +2382,7 @@ public class WordExportService {
         applyRunFontProperties(rPr, family, size);
     }
 
-    /** 同时写入 w:sz 与 w:szCs（半磅），避免中文仍继承模板字号 */
+    /** 同时写入 w:sz 与 w:szCs（半磅），避免中文仍继承模板字号；并关闭 run 级拼写校对 */
     private void applyRunFontProperties(CTRPr rPr, String family, double sizePt) {
         BigInteger halfPoints = BigInteger.valueOf(Math.round(sizePt * 2));
         if (rPr.sizeOfSzArray() > 0) {
@@ -1848,6 +2394,10 @@ public class WordExportService {
             rPr.getSzCsArray(0).setVal(halfPoints);
         } else {
             rPr.addNewSzCs().setVal(halfPoints);
+        }
+        // 不对专有名词做拼写检查（配合文档 hideSpellingErrors）
+        if (rPr.sizeOfNoProofArray() == 0) {
+            rPr.addNewNoProof();
         }
         CTFonts fonts = rPr.sizeOfRFontsArray() > 0 ? rPr.getRFontsArray(0) : rPr.addNewRFonts();
         fonts.setEastAsia(family);

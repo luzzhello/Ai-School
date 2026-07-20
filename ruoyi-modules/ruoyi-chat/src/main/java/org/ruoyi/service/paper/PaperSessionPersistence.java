@@ -234,6 +234,7 @@ public class PaperSessionPersistence {
                 .eq(PaperReferenceEntity::getSessionId, sessionId)
                 .orderByAsc(PaperReferenceEntity::getRefIndex));
         List<Reference> list = new ArrayList<>();
+        java.util.Set<String> seen = new java.util.LinkedHashSet<>();
         for (PaperReferenceEntity row : rows) {
             Reference ref = new Reference();
             ref.setIndex(row.getRefIndex());
@@ -246,9 +247,62 @@ public class PaperSessionPersistence {
             ref.setCitation(row.getCitation());
             ref.setLanguage(row.getLanguage());
             ref.setChapter(row.getChapter());
+            String key = referenceDedupeKey(ref);
+            if (StringUtils.isNotBlank(key) && !seen.add(key)) {
+                continue;
+            }
             list.add(ref);
         }
+        for (int i = 0; i < list.size(); i++) {
+            list.get(i).setIndex(i + 1);
+        }
         return list;
+    }
+
+    private static String referenceDedupeKey(Reference ref) {
+        if (ref == null) {
+            return "";
+        }
+        if (StringUtils.isNotBlank(ref.getDoi())) {
+            return "doi:" + ref.getDoi().trim().toLowerCase();
+        }
+        String text = StringUtils.isNotBlank(ref.getCitation()) ? ref.getCitation() : ref.getTitle();
+        if (StringUtils.isBlank(text)) {
+            return "";
+        }
+        return text.replaceAll("\\s+", "").toLowerCase();
+    }
+
+    private void saveReferences(String sessionId, List<Reference> references, Date now) {
+        referenceMapper.delete(Wrappers.<PaperReferenceEntity>lambdaQuery()
+            .eq(PaperReferenceEntity::getSessionId, sessionId));
+        if (references == null || references.isEmpty()) {
+            return;
+        }
+        java.util.Set<String> seen = new java.util.LinkedHashSet<>();
+        int idx = 1;
+        for (Reference ref : references) {
+            String key = referenceDedupeKey(ref);
+            if (StringUtils.isNotBlank(key) && !seen.add(key)) {
+                continue;
+            }
+            PaperReferenceEntity row = new PaperReferenceEntity();
+            row.setSessionId(sessionId);
+            row.setRefIndex(ref.getIndex() != null ? ref.getIndex() : idx);
+            row.setAuthor(ref.getAuthor());
+            row.setTitle(ref.getTitle());
+            row.setSource(ref.getSource());
+            row.setYear(ref.getYear());
+            row.setDoi(ref.getDoi());
+            row.setType(ref.getType());
+            row.setCitation(ref.getCitation());
+            row.setLanguage(ref.getLanguage());
+            row.setChapter(ref.getChapter());
+            row.setCreateTime(now);
+            row.setUpdateTime(now);
+            referenceMapper.insert(row);
+            idx++;
+        }
     }
 
     private void syncTocFromChapters(List<TocNode> nodes, Map<String, String> contentMap,
@@ -270,33 +324,6 @@ public class PaperSessionPersistence {
             if (node.getChildren() != null) {
                 syncTocFromChapters(node.getChildren(), contentMap, statusMap);
             }
-        }
-    }
-
-    private void saveReferences(String sessionId, List<Reference> references, Date now) {
-        referenceMapper.delete(Wrappers.<PaperReferenceEntity>lambdaQuery()
-            .eq(PaperReferenceEntity::getSessionId, sessionId));
-        if (references == null || references.isEmpty()) {
-            return;
-        }
-        int idx = 1;
-        for (Reference ref : references) {
-            PaperReferenceEntity row = new PaperReferenceEntity();
-            row.setSessionId(sessionId);
-            row.setRefIndex(ref.getIndex() != null ? ref.getIndex() : idx);
-            row.setAuthor(ref.getAuthor());
-            row.setTitle(ref.getTitle());
-            row.setSource(ref.getSource());
-            row.setYear(ref.getYear());
-            row.setDoi(ref.getDoi());
-            row.setType(ref.getType());
-            row.setCitation(ref.getCitation());
-            row.setLanguage(ref.getLanguage());
-            row.setChapter(ref.getChapter());
-            row.setCreateTime(now);
-            row.setUpdateTime(now);
-            referenceMapper.insert(row);
-            idx++;
         }
     }
 
@@ -351,24 +378,78 @@ public class PaperSessionPersistence {
         chapterMapper.updateById(existing);
     }
 
+    /**
+     * 进度按「可撰写叶子章节」统计（与一键生成口径一致），不含仅作目录容器的父节点。
+     * 父节点也会落库，但通常无正文，若计入会导致「大纲全完成却显示 51/64」。
+     */
     private void fillChapterProgress(PaperSessionSummary summary, PaperSessionEntity entity) {
+        List<TocNode> toc = parseJson(entity.getTocJson(), TOC_TYPE, new ArrayList<>());
+        List<TocNode> leaves = new ArrayList<>();
+        collectLeafNodes(toc, leaves);
+
+        Map<String, PaperChapterEntity> chapterById = new LinkedHashMap<>();
         List<PaperChapterEntity> chapters = chapterMapper.selectList(
             Wrappers.<PaperChapterEntity>lambdaQuery()
                 .eq(PaperChapterEntity::getSessionId, entity.getSessionId()));
-
-        int total = chapters.size();
-        int done = 0;
         for (PaperChapterEntity chapter : chapters) {
-            if ("done".equals(chapter.getStatus()) || StringUtils.isNotBlank(chapter.getContent())) {
-                done++;
-            }
+            chapterById.put(chapter.getChapterId(), chapter);
         }
-        if (total == 0 && StringUtils.isNotBlank(entity.getTocJson())) {
-            List<TocNode> toc = parseJson(entity.getTocJson(), TOC_TYPE, new ArrayList<>());
-            total = flattenToc(toc).size();
+
+        int total;
+        int done = 0;
+        if (!leaves.isEmpty()) {
+            total = leaves.size();
+            for (TocNode leaf : leaves) {
+                if (isChapterDone(leaf, chapterById.get(leaf.getId()))) {
+                    done++;
+                }
+            }
+        } else {
+            // 无 TOC 时回退：按章节表统计
+            total = chapters.size();
+            for (PaperChapterEntity chapter : chapters) {
+                if ("done".equals(chapter.getStatus()) || StringUtils.isNotBlank(chapter.getContent())) {
+                    done++;
+                }
+            }
         }
         summary.setChapterTotal(total);
         summary.setChapterDone(done);
+    }
+
+    private void collectLeafNodes(List<TocNode> nodes, List<TocNode> out) {
+        if (nodes == null) {
+            return;
+        }
+        for (TocNode node : nodes) {
+            if (node == null) {
+                continue;
+            }
+            // 「目录」页由导出生成，不计入撰写进度
+            if (isTocPageNode(node)) {
+                continue;
+            }
+            if (node.getChildren() != null && !node.getChildren().isEmpty()) {
+                collectLeafNodes(node.getChildren(), out);
+            } else {
+                out.add(node);
+            }
+        }
+    }
+
+    private boolean isTocPageNode(TocNode node) {
+        String id = node.getId() == null ? "" : node.getId().toLowerCase();
+        String title = node.getTitle() == null ? "" : node.getTitle().trim();
+        return "toc".equals(id) || "catalog".equals(id) || "目录".equals(title);
+    }
+
+    private boolean isChapterDone(TocNode leaf, PaperChapterEntity chapter) {
+        if (chapter != null) {
+            if ("done".equals(chapter.getStatus()) || StringUtils.isNotBlank(chapter.getContent())) {
+                return true;
+            }
+        }
+        return leaf != null && "done".equals(leaf.getStatus());
     }
 
     private Map<String, TocNode> flattenToc(List<TocNode> nodes) {

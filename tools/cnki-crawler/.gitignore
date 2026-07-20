@@ -1,5 +1,6 @@
 data/*.jsonl
 data/checkpoint.json
+data/checkpoint_en.json
 data/logs/
 config.yaml
 __pycache__/

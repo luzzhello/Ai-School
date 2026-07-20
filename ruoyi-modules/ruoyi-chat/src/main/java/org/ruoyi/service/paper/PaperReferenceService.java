@@ -21,7 +21,8 @@ import java.util.concurrent.Executors;
 /**
  * 论文生成——参考文献检索（流式 SSE）。
  * <p>
- * 从 {@code lit_paper} 文献库检索真实元数据，不再调用大模型编造文献。
+ * 从文献库检索真实元数据（中文 {@code lit_paper} / 英文 {@code lit_paper_en}）。
+ * 英文库中文查询依赖入库时的知网中译字段，不在此做在线翻译。
  */
 @Slf4j
 @Service
@@ -56,9 +57,17 @@ public class PaperReferenceService {
         }
         int count = request.getCount() != null && request.getCount() > 0
             ? Math.min(request.getCount(), 50)
-            : 20;
-        String language = StringUtils.isBlank(request.getLanguage()) ? null : request.getLanguage().trim().toLowerCase();
-        executor.submit(() -> runSearch(request.getSessionId(), keyword, language, count, emitter));
+            : 50;
+        String language;
+        try {
+            language = LitPaperSearchService.normalizeLanguage(
+                StringUtils.isBlank(request.getLanguage()) ? "zh" : request.getLanguage());
+        } catch (ServiceException e) {
+            sendError(emitter, e.getMessage());
+            return;
+        }
+        String finalLanguage = language;
+        executor.submit(() -> runSearch(request.getSessionId(), keyword, finalLanguage, count, emitter));
     }
 
     private void runSearch(String sessionId, String keyword, String language, int count, SseEmitter emitter) {
@@ -73,8 +82,8 @@ public class PaperReferenceService {
                 return;
             }
 
-            paperSessionStore.update(sessionId, s -> s.setReferences(references));
-
+            // 检索仅推送给前端勾选，禁止写入 session.references。
+            // 否则每次搜索/自动补全都会覆盖已确认文献，并发落库还会产生大量重复行。
             for (Reference ref : references) {
                 sendEvent(emitter, Map.of("type", "reference", "reference", ref));
             }

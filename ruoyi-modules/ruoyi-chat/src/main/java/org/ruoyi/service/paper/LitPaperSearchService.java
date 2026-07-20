@@ -2,10 +2,12 @@ package org.ruoyi.service.paper;
 
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.ruoyi.common.core.exception.ServiceException;
 import org.ruoyi.common.core.utils.StringUtils;
 import org.ruoyi.config.LitPaperProperties;
 import org.ruoyi.domain.entity.lit.LitPaperEntity;
 import org.ruoyi.domain.paper.Reference;
+import org.ruoyi.mapper.lit.LitPaperEnMapper;
 import org.ruoyi.mapper.lit.LitPaperMapper;
 import org.springframework.stereotype.Service;
 
@@ -17,41 +19,53 @@ import java.util.Map;
 import java.util.regex.Pattern;
 
 /**
- * 从 lit_paper 检索真实文献并映射为论文会话 Reference。
- * FULLTEXT 不足时回退 LIKE；不做 LLM 补全。
+ * 文献库检索：中文查 {@code lit_paper}，英文查 {@code lit_paper_en}；不做「全部」混合检索。
+ * <p>
+ * 英文库检索：若关键词含中文（用户常用中文题检索外文文献），
+ * <b>一律匹配知网中译字段</b> {@code title_zh/keywords_zh/abstract_zh}；
+ * 纯英文关键词再匹配原文 title/keywords/abstract。
  */
 @Slf4j
 @Service
 @RequiredArgsConstructor
 public class LitPaperSearchService {
 
-    private static final Pattern CJK = Pattern.compile("[\\u4e00-\\u9fa5]");
+    private static final Pattern CJK = Pattern.compile("[\\u4e00-\\u9fff]");
+    private static final Pattern TOKEN_SPLIT = Pattern.compile("\\s+");
 
     private final LitPaperMapper litPaperMapper;
+    private final LitPaperEnMapper litPaperEnMapper;
     private final LitPaperProperties litPaperProperties;
 
+    /**
+     * @param language 仅支持 {@code zh} / {@code en}；其它值抛错
+     */
     public List<Reference> search(String keyword, String language, int limit) {
         if (StringUtils.isBlank(keyword) || limit <= 0) {
             return List.of();
         }
-        int fromYear = LocalDate.now().getYear() - litPaperProperties.getRecentYears();
-        int fetch = Math.max(limit * 3, limit);
-        List<LitPaperEntity> rows;
-        try {
-            rows = litPaperMapper.searchFulltext(keyword.trim(), fromYear, fetch);
-        } catch (Exception e) {
-            log.warn("lit_paper FULLTEXT search failed, fallback to LIKE: {}", e.getMessage());
-            rows = List.of();
+        String lang = normalizeLanguage(language);
+        String original = keyword.trim();
+        String query = LitQueryNormalizer.toSearchQuery(original);
+        if (StringUtils.isBlank(query)) {
+            query = original;
         }
-        if (rows == null || rows.isEmpty()) {
-            rows = litPaperMapper.searchLike(keyword.trim(), fromYear, fetch);
+        log.info("lit search lang={} original='{}' query='{}' limit={}", lang, original, query, limit);
+
+        int fromYear = LocalDate.now().getYear() - litPaperProperties.getRecentYears();
+        // 英文库 + 中文检索词：强制走 *_zh（用原文判断，避免清洗后只剩英文专名）
+        boolean enZh = "en".equals(lang) && containsCjk(original);
+        List<LitPaperEntity> rows = enZh
+            ? searchEnZh(query, fromYear, limit)
+            : searchRows(lang, query, fromYear, limit);
+        if ((rows == null || rows.isEmpty()) && !query.equals(original)) {
+            rows = enZh
+                ? searchEnZh(original, fromYear, limit)
+                : searchRows(lang, original, fromYear, limit);
         }
         Map<Long, Reference> uniq = new LinkedHashMap<>();
-        for (LitPaperEntity row : rows) {
-            Reference ref = toReference(row);
-            if (language != null && !language.equals(ref.getLanguage())) {
-                continue;
-            }
+        for (LitPaperEntity row : rows == null ? List.<LitPaperEntity>of() : rows) {
+            Reference ref = toReference(row, lang);
             uniq.putIfAbsent(row.getId(), ref);
             if (uniq.size() >= limit) {
                 break;
@@ -64,7 +78,128 @@ public class LitPaperSearchService {
         return list;
     }
 
-    private Reference toReference(LitPaperEntity row) {
+    public static String normalizeLanguage(String language) {
+        if (StringUtils.isBlank(language)) {
+            throw new ServiceException("请选择中文或英文文献");
+        }
+        String lang = language.trim().toLowerCase();
+        if ("zh".equals(lang) || "en".equals(lang)) {
+            return lang;
+        }
+        throw new ServiceException("文献语言仅支持中文(zh)或英文(en)");
+    }
+
+    private List<LitPaperEntity> searchRows(String lang, String query, int fromYear, int fetch) {
+        if ("en".equals(lang)) {
+            return searchEn(query, fromYear, fetch);
+        }
+        return searchZh(query, fromYear, fetch);
+    }
+
+    private List<LitPaperEntity> searchZh(String query, int fromYear, int fetch) {
+        try {
+            List<LitPaperEntity> rows = litPaperMapper.searchFulltext(query, fromYear, fetch);
+            if (rows != null && !rows.isEmpty()) {
+                return rows;
+            }
+        } catch (Exception e) {
+            log.warn("lit_paper FULLTEXT search failed, fallback to LIKE: {}", e.getMessage());
+        }
+        try {
+            return litPaperMapper.searchLike(query, fromYear, fetch);
+        } catch (Exception e) {
+            log.warn("lit_paper LIKE search failed: {}", e.getMessage());
+            return List.of();
+        }
+    }
+
+    private List<LitPaperEntity> searchEn(String query, int fromYear, int fetch) {
+        if (containsCjk(query)) {
+            return searchEnZh(query, fromYear, fetch);
+        }
+        try {
+            List<LitPaperEntity> rows = litPaperEnMapper.searchFulltext(query, fromYear, fetch);
+            if (rows != null && !rows.isEmpty()) {
+                return rows;
+            }
+        } catch (Exception e) {
+            log.warn("lit_paper_en FULLTEXT search failed, fallback to LIKE: {}", e.getMessage());
+        }
+        try {
+            return litPaperEnMapper.searchLike(query, fromYear, fetch);
+        } catch (Exception e) {
+            log.warn("lit_paper_en LIKE search failed: {}", e.getMessage());
+            return List.of();
+        }
+    }
+
+    /**
+     * 英文表中译字段检索：FULLTEXT → 整句 LIKE → 按词分拆 LIKE 合并。
+     */
+    private List<LitPaperEntity> searchEnZh(String query, int fromYear, int fetch) {
+        try {
+            List<LitPaperEntity> rows = litPaperEnMapper.searchFulltextZh(query, fromYear, fetch);
+            if (rows != null && !rows.isEmpty()) {
+                return rows;
+            }
+        } catch (Exception e) {
+            log.warn("lit_paper_en ZH FULLTEXT search failed, fallback to LIKE: {}", e.getMessage());
+        }
+        try {
+            List<LitPaperEntity> rows = litPaperEnMapper.searchLikeZh(query, fromYear, fetch);
+            if (rows != null && !rows.isEmpty()) {
+                return rows;
+            }
+        } catch (Exception e) {
+            log.warn("lit_paper_en ZH LIKE search failed: {}", e.getMessage());
+        }
+        // 多词整句 LIKE 难命中：逐词查中译字段再合并
+        List<LitPaperEntity> merged = mergeLikeZhByTokens(query, fromYear, fetch);
+        if (!merged.isEmpty()) {
+            return merged;
+        }
+        // 最后兜底：英文专名可能仍在原文 title 中
+        try {
+            return litPaperEnMapper.searchLike(query, fromYear, fetch);
+        } catch (Exception e) {
+            return List.of();
+        }
+    }
+
+    private List<LitPaperEntity> mergeLikeZhByTokens(String query, int fromYear, int fetch) {
+        Map<Long, LitPaperEntity> uniq = new LinkedHashMap<>();
+        for (String token : TOKEN_SPLIT.split(query.trim())) {
+            String t = token.trim();
+            if (t.length() < 2) {
+                continue;
+            }
+            // 去掉粘在英文后的「的」前缀：的骑行网站 → 骑行网站
+            if (t.startsWith("的") && t.length() > 2 && containsCjk(t.substring(1))) {
+                t = t.substring(1);
+            }
+            try {
+                List<LitPaperEntity> part = litPaperEnMapper.searchLikeZh(t, fromYear, fetch);
+                if (part == null) {
+                    continue;
+                }
+                for (LitPaperEntity row : part) {
+                    uniq.putIfAbsent(row.getId(), row);
+                    if (uniq.size() >= fetch) {
+                        return new ArrayList<>(uniq.values());
+                    }
+                }
+            } catch (Exception ignored) {
+                // continue other tokens
+            }
+        }
+        return new ArrayList<>(uniq.values());
+    }
+
+    private static boolean containsCjk(String text) {
+        return text != null && CJK.matcher(text).find();
+    }
+
+    private Reference toReference(LitPaperEntity row, String lang) {
         Reference ref = new Reference();
         ref.setAuthor(row.getAuthors());
         ref.setTitle(row.getTitle());
@@ -72,48 +207,23 @@ public class LitPaperSearchService {
         ref.setYear(row.getYear());
         ref.setDoi(row.getDoi());
         ref.setType(StringUtils.isNotBlank(row.getDocType()) ? row.getDocType() : "J");
+        ref.setVolume(row.getVolume());
+        ref.setIssue(row.getIssue());
+        ref.setPages(row.getPages());
+        ref.setPublisher(row.getPublisher());
+        ref.setPublishPlace(row.getPublishPlace());
+        ref.setTranslator(row.getTranslator());
+        ref.setDegree(row.getDegree());
+        ref.setDegreePlace(row.getDegreePlace());
+        ref.setPatentCountry(row.getPatentCountry());
+        ref.setPatentKind(row.getPatentKind());
+        ref.setPatentNo(row.getPatentNo());
+        ref.setStandardCode(row.getStandardCode());
+        ref.setPublishDate(row.getPublishDate());
         ref.setAbstractText(row.getAbstractText());
-        ref.setLanguage(detectLanguage(ref));
-        if (StringUtils.isNotBlank(row.getCitationGbt())) {
-            ref.setCitation(row.getCitationGbt());
-        } else {
-            ref.setCitation(formatCitation(ref));
-        }
+        ref.setDetailUrl(row.getDetailUrl());
+        ref.setLanguage(lang);
+        ref.setCitation(Gbt7714Formatter.resolveCitation(ref, row.getCitationGbt()));
         return ref;
-    }
-
-    private String detectLanguage(Reference ref) {
-        String probe = (ref.getTitle() == null ? "" : ref.getTitle())
-            + (ref.getAuthor() == null ? "" : ref.getAuthor());
-        return CJK.matcher(probe).find() ? "zh" : "en";
-    }
-
-    private String formatCitation(Reference ref) {
-        String type = ref.getType() == null ? "" : ref.getType().trim().toUpperCase();
-        String tag = switch (type) {
-            case "D" -> "[D]";
-            case "M" -> "[M]";
-            case "C" -> "[C]";
-            default -> "[J]";
-        };
-        StringBuilder sb = new StringBuilder();
-        if (StringUtils.isNotBlank(ref.getAuthor())) {
-            sb.append(ref.getAuthor().trim()).append('.');
-        }
-        if (StringUtils.isNotBlank(ref.getTitle())) {
-            sb.append(ref.getTitle().trim());
-        }
-        sb.append(tag);
-        if (StringUtils.isNotBlank(ref.getSource())) {
-            sb.append(ref.getSource().trim());
-        }
-        if (ref.getYear() != null) {
-            sb.append(',').append(ref.getYear());
-        }
-        sb.append('.');
-        if (StringUtils.isNotBlank(ref.getDoi())) {
-            sb.append("DOI:").append(ref.getDoi().trim()).append('.');
-        }
-        return sb.toString();
     }
 }

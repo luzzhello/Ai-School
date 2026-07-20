@@ -32,9 +32,44 @@ public class LitPaperEntity implements Serializable {
 
     private String keywords;
 
+    /** 知网外文中译题名（仅 lit_paper_en） */
+    private String titleZh;
+
+    /** 知网外文中译摘要（仅 lit_paper_en） */
+    private String abstractZh;
+
+    /** 知网外文中译关键词（仅 lit_paper_en） */
+    private String keywordsZh;
+
     private String source;
 
     private Integer year;
+
+    private String volume;
+
+    private String issue;
+
+    private String pages;
+
+    private String publisher;
+
+    private String publishPlace;
+
+    private String translator;
+
+    private String degree;
+
+    private String degreePlace;
+
+    private String patentCountry;
+
+    private String patentKind;
+
+    private String patentNo;
+
+    private String standardCode;
+
+    private String publishDate;
 
     private String docType;
 

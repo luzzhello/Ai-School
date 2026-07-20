@@ -41,6 +41,19 @@ public final class DrawChatModelSupport {
         }
     }
 
+    /** 系统提示 + 用户提示（论文摘要等场景）。 */
+    public static String chat(ChatModel model, String systemPrompt, String userPrompt) {
+        String system = systemPrompt == null ? "" : systemPrompt.trim();
+        String user = userPrompt == null ? "" : userPrompt.trim();
+        if (system.isEmpty()) {
+            return chat(model, user);
+        }
+        if (user.isEmpty()) {
+            return chat(model, system);
+        }
+        return chat(model, system + "\n\n" + user);
+    }
+
     private static final String AI_BUSY_MESSAGE = "AI系统访问繁忙，稍后再试";
 
     private static ServiceException toServiceException(Throwable e) {

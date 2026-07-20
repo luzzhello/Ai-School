@@ -75,7 +75,12 @@
 | `keywords` | 关键词 |
 | `source` | 期刊/会议名 |
 | `year` | 年份 |
-| `doc_type` | J/D/C/M 等 |
+| `volume` / `issue` / `pages` | 卷、期、起-止页码 |
+| `publisher` / `publish_place` / `translator` | 出版者、出版地、译者 |
+| `degree` / `degree_place` | 学位论文类型与授予单位所在地 |
+| `patent_country` / `patent_kind` / `patent_no` | 专利国名、种类、专利号 |
+| `standard_code` / `publish_date` | 标准代号、专利/标准出版日期 |
+| `doc_type` | J/D/C/M/P/S |
 | `cite_count` | 被引次数 |
 | `lit_source` | 固定如 `CNKI` |
 | `citation_gbt` | GB/T 7714 引用格式 |

@@ -27,3 +27,26 @@ def test_merge_active_when_abstract_and_keywords():
     paper = merge_list_and_detail(row, detail)
     assert paper.status == "active"
     assert paper.citation_gbt == "custom"
+
+
+def test_merge_prefers_list_title_authors_source():
+    """题名/作者/来源以列表为准，不被详情页覆盖。"""
+    row = {
+        "title": "列表题名",
+        "authors": "列表作者",
+        "source": "列表来源",
+        "year": 2024,
+        "crawl_keyword": "springboot",
+    }
+    detail = {
+        "title": "详情题名（不应采用）",
+        "authors": "详情作者",
+        "source": "详情来源",
+        "abstract_text": "摘要",
+        "keywords": "关键词",
+    }
+    paper = merge_list_and_detail(row, detail)
+    assert paper.title == "列表题名"
+    assert paper.authors == "列表作者"
+    assert paper.source == "列表来源"
+    assert paper.abstract_text == "摘要"

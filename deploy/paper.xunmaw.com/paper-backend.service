@@ -1,0 +1,16 @@
+[Unit]
+Description=Paper RuoYi-AI Backend
+After=network.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/opt/paper/backend
+ExecStart=/opt/paper/start-backend.sh
+Restart=always
+RestartSec=10
+StandardOutput=append:/opt/paper/logs/backend.log
+StandardError=append:/opt/paper/logs/backend.log
+
+[Install]
+WantedBy=multi-user.target

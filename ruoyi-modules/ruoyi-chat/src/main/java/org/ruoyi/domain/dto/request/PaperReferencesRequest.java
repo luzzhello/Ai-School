@@ -22,6 +22,6 @@ public class PaperReferencesRequest {
     /** 语言筛选：zh / en，空表示中英文混合 */
     private String language;
 
-    /** 期望生成条数（可选，默认 20，自动补全时可传 40） */
+    /** 期望条数（可选，默认 50，上限 50） */
     private Integer count;
 }

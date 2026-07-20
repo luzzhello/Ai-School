@@ -31,8 +31,47 @@ public class Reference implements Serializable {
     /** DOI（可空） */
     private String doi;
 
-    /** 文献类型：J=期刊 / D=学位论文 / M=专著 */
+    /** 文献类型：J=期刊 / D=学位论文 / M=专著 / C=论文集 / P=专利 / S=标准 */
     private String type;
+
+    /** 卷号 */
+    private String volume;
+
+    /** 期号 */
+    private String issue;
+
+    /** 起-止页码，如 45-52 */
+    private String pages;
+
+    /** 出版者 */
+    private String publisher;
+
+    /** 出版地 */
+    private String publishPlace;
+
+    /** 译者 */
+    private String translator;
+
+    /** 学位类型（学位论文） */
+    private String degree;
+
+    /** 授予单位所在地 */
+    private String degreePlace;
+
+    /** 专利国名 */
+    private String patentCountry;
+
+    /** 专利文献种类 */
+    private String patentKind;
+
+    /** 专利号 */
+    private String patentNo;
+
+    /** 技术标准代号 */
+    private String standardCode;
+
+    /** 专利/标准出版日期 */
+    private String publishDate;
 
     /** 完整引文（按 GB/T 7714 格式拼接），如：作者.标题[J].期刊名,年份.DOI */
     private String citation;
@@ -45,4 +84,7 @@ public class Reference implements Serializable {
 
     /** 摘要（自定义录入或检索结果展示用，可空） */
     private String abstractText;
+
+    /** 文献详情页链接（来自文献库主表 detail_url） */
+    private String detailUrl;
 }

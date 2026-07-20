@@ -184,6 +184,13 @@
             <artifactId>alipay-sdk-java</artifactId>
         </dependency>
 
+        <!-- 中文分词：文献检索词提取 -->
+        <dependency>
+            <groupId>com.huaban</groupId>
+            <artifactId>jieba-analysis</artifactId>
+            <version>1.0.2</version>
+        </dependency>
+
         <!-- Test dependencies -->
         <dependency>
             <groupId>org.junit.jupiter</groupId>

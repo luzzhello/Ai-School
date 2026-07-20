@@ -1,0 +1,138 @@
+# Software / CS seed keywords for CNKI foreign (Rlang=FOREIGN) search.
+# One keyword per line; lines starting with # are ignored.
+
+# —— Software engineering ——
+software engineering
+software development
+software design
+software architecture
+software quality
+software testing
+software maintenance
+software process
+software metrics
+software reliability
+requirements engineering
+requirements analysis
+object-oriented
+service-oriented
+UML
+domain-driven design
+agile development
+continuous integration
+continuous delivery
+DevOps
+refactoring
+formal methods
+model-driven engineering
+software verification
+code smell
+software defect
+technical debt
+design patterns
+
+# —— Architecture & distributed ——
+microservices
+microservice architecture
+system architecture
+distributed systems
+service mesh
+cloud native
+containerization
+Kubernetes
+Docker
+load balancing
+high availability
+message queue
+service governance
+API gateway
+RESTful
+
+# —— Web / backend ——
+Spring Boot
+Spring Cloud
+Java
+backend development
+Web development
+MyBatis
+Node.js
+Go language
+.NET
+
+# —— Frontend / mobile ——
+frontend development
+Vue
+React
+Angular
+mobile application
+Android
+iOS
+cross-platform
+Flutter
+responsive design
+
+# —— Data & storage ——
+database
+database design
+MySQL
+PostgreSQL
+NoSQL
+Redis
+MongoDB
+data warehouse
+big data
+data governance
+ETL
+data visualization
+
+# —— AI / intelligent systems ——
+artificial intelligence
+machine learning
+deep learning
+neural network
+natural language processing
+computer vision
+knowledge graph
+recommender system
+large language model
+generative AI
+question answering
+
+# —— Security ——
+information security
+network security
+software security
+vulnerability detection
+static analysis
+intrusion detection
+privacy preserving
+access control
+cryptography
+secure software
+
+# —— Network / IoT / embedded ——
+computer network
+Internet of Things
+edge computing
+cloud computing
+embedded system
+wireless communication
+blockchain
+
+# —— HCI / multimedia ——
+human-computer interaction
+user experience
+image processing
+virtual reality
+augmented reality
+
+# —— Education / common thesis topics ——
+educational management system
+online learning
+learning management system
+e-commerce system
+hospital information system
+office automation
+code plagiarism detection
+automated assessment
+programming contest

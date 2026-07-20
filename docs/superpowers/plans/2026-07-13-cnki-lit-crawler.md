@@ -645,7 +645,7 @@ public class LitPaperProperties {
 # application.yml
 paper:
   lit:
-    recent-years: 8
+    recent-years: 5
 ```
 
 - [ ] **Step 2: Entity + Mapper search method**

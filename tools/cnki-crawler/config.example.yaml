@@ -1,16 +1,31 @@
-cookie: "REPLACE_WITH_BROWSER_COOKIE"
+# Cookie 含 JSON 双引号时必须用 | 块写法，不要用 "..." 包一整行
+cookie: |
+  REPLACE_WITH_BROWSER_COOKIE
 user_agent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
-list_delay_sec: 2.0
-detail_delay_sec: 4.0
-delay_jitter_sec: 1.5
-daily_detail_limit: 800
-max_per_keyword: 200
+# 个人账号建议不要低于 2/5；过快极易触发安全验证
+list_delay_sec: 3.0
+detail_delay_sec: 6.0
+delay_jitter_sec: 2.0
+daily_detail_limit: 1000
+max_per_keyword: 100
 from_year: 2018
 to_year: 2026
+# 总库语言：chinese=中文；foreign=外文（QueryJson.Rlang=FOREIGN + View=changeDBCh）
+search_lang: chinese
+# keywords_file: keywords/se.txt
+# keywords_file_en: keywords/se-en.txt
+output_jsonl: data/papers.jsonl
+output_jsonl_en: data/papers_en.jsonl
+# 中文 / 外文断点分文件，删其一不影响另一语言进度
+checkpoint_path: data/checkpoint.json
+checkpoint_path_en: data/checkpoint_en.json
 doc_types:
   - journal
   - conference
   - master
   - phd
-output_jsonl: data/papers.jsonl
-checkpoint_path: data/checkpoint.json
+captcha_pause_sec: 90
+captcha_stop_after: 3
+# 详情缺页码/期号时是否再去 bar.cnki 结算页补全（默认关：顶栏 .top-tip 已够用）
+fetch_dazhong: false
+# list_only: true   # 只要列表字段、不抓详情时可打开

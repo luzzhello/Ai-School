@@ -52,18 +52,36 @@ public final class PaperReferenceContentHelper {
             return "（暂无参考文献，请返回第一步检索并确认文献）";
         }
         StringBuilder sb = new StringBuilder();
-        sb.append("请在提交前通过知网核实文献真实性。\n\n");
         for (Reference ref : references) {
             int index = ref.getIndex() == null ? 0 : ref.getIndex();
             sb.append('[').append(index).append("] ");
             if (StringUtils.isNotBlank(ref.getCitation())) {
-                sb.append(ref.getCitation().trim());
+                sb.append(stripLeadingReferenceIndex(ref.getCitation().trim()));
             } else {
                 sb.append(buildFallbackCitation(ref));
             }
             sb.append('\n');
         }
         return sb.toString().trim();
+    }
+
+    private static final java.util.regex.Pattern LEADING_REF_INDEX =
+        java.util.regex.Pattern.compile("^\\[\\s*\\d+\\s*]\\s*");
+
+    /** 去掉题录自带的 [n] 前缀，避免与外层序号叠成 [1][1] */
+    static String stripLeadingReferenceIndex(String text) {
+        if (StringUtils.isBlank(text)) {
+            return "";
+        }
+        String s = text.trim();
+        while (true) {
+            var m = LEADING_REF_INDEX.matcher(s);
+            if (!m.find()) {
+                break;
+            }
+            s = s.substring(m.end()).trim();
+        }
+        return s;
     }
 
     /**
