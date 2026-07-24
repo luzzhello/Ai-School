@@ -4,7 +4,6 @@ import json
 import logging
 import time
 from collections.abc import Iterator
-from pathlib import Path
 from urllib.parse import urlencode
 
 from src.checkpoint import Checkpoint
@@ -22,10 +21,6 @@ DEFAULT_RESULT_PATH = "https://kns.cnki.net/kns8s/defaultresult/index"
 
 DEFAULT_CLASS_ID = "WD0FTY92"
 DEFAULT_CROSS_IDS = "YSTT4HG0,LSTPFY1C,JUP3MUPD,MPMFIG1A,WQ0UVIAA,BLZOG7CK,PWFIRAGL,EMRPGLPA,NLBO1Z6R,NN3FJMUV"
-# 外文总库（浏览器点「外文」抓包）
-FOREIGN_CROSS_IDS = (
-    "YSTT4HG0,LSTPFY1C,EMRPGLPA,JUP3MUPD,MPMFIG1A,WQ0UVIAA,BLZOG7CK,PWFIRAGL,NN3FJMUV,NLBO1Z6R"
-)
 DEFAULT_PRODUCT_STR = (
     "YSTT4HG0,LSTPFY1C,RMJLXHZ3,JQIRZIYA,JUP3MUPD,1UR4K4HZ,BPBAFJ5S,R79MZMCB,"
     "MPMFIG1A,WQ0UVIAA,NB3BWEHK,XVLO76FD,HR1YT1Z9,BLZOG7CK,PWFIRAGL,EMRPGLPA,"
@@ -33,23 +28,6 @@ DEFAULT_PRODUCT_STR = (
 )
 STARTER_RESOURCES = "CJFQ,CDMD,CIPD,CCND,CISD,SNAD,CCJD,BDZK,CCVD,CJFN"
 PAGE_SIZE = 20
-
-# chinese = 总库中文；foreign = 总库外文
-RLANG_CHINESE = "CHINESE"
-RLANG_FOREIGN = "FOREIGN"
-
-
-def normalize_rlang(value: str | None) -> str:
-    raw = (value or "chinese").strip().lower()
-    if raw in {"foreign", "en", "english", "外文", "fw"}:
-        return RLANG_FOREIGN
-    return RLANG_CHINESE
-
-
-def checkpoint_keyword_key(keyword: str, rlang: str) -> str:
-    """关键词进度键（中/外文已分文件，键即为词本身；rlang 保留以兼容调用方）。"""
-    _ = rlang
-    return keyword
 
 
 def search_index_url(keyword: str) -> str:
@@ -63,7 +41,6 @@ def build_query_json(
     from_year: int | None,
     to_year: int | None,
     search_from: int,
-    rlang: str = RLANG_CHINESE,
 ) -> str:
     qgroups: list[dict] = [
         {
@@ -104,9 +81,7 @@ def build_query_json(
                 "ChildItems": [],
             }
         )
-    rlang_n = normalize_rlang(rlang)
-    kuaku = FOREIGN_CROSS_IDS if rlang_n == RLANG_FOREIGN else DEFAULT_CROSS_IDS
-    payload: dict = {
+    payload = {
         "Platform": "",
         "Resource": "CROSSDB",
         "Classid": DEFAULT_CLASS_ID,
@@ -114,14 +89,11 @@ def build_query_json(
         "QNode": {"QGroup": qgroups},
         "ExScope": 1,
         "SearchType": 2,
-        "Rlang": rlang_n,
-        "KuaKuCode": kuaku,
+        "Rlang": "CHINESE",
+        "KuaKuCode": DEFAULT_CROSS_IDS,
         "Expands": {},
         "SearchFrom": search_from,
     }
-    # 浏览器点「外文」时带 View=changeDBCh
-    if rlang_n == RLANG_FOREIGN:
-        payload["View"] = "changeDBCh"
     return json.dumps(payload, ensure_ascii=False)
 
 
@@ -133,16 +105,10 @@ def build_search_payload(
     *,
     is_first: bool,
     turnpage: str = "",
-    rlang: str = RLANG_CHINESE,
 ) -> dict[str, str]:
     search_from = 1 if is_first else 4
-    rlang_n = normalize_rlang(rlang)
     query_json = build_query_json(
-        keyword,
-        from_year=from_year,
-        to_year=to_year,
-        search_from=search_from,
-        rlang=rlang_n,
+        keyword, from_year=from_year, to_year=to_year, search_from=search_from
     )
     form: dict[str, str] = {
         "boolSearch": "true" if is_first else "false",
@@ -166,72 +132,20 @@ def build_search_payload(
     return form
 
 
-def _looks_like_grid_list(text: str) -> bool:
-    """Valid kns8s AJAX list HTML has these markers (not the browser 401 shell page)."""
-    return (
-        "result-table-list" in text
-        or "pagerTitleCell" in text
-        or 'id="hidTurnPage"' in text
-        or "name=\"hidTurnPage\"" in text
-        or 'class="no-content"' in text
-        or "暂无数据" in text
-        or "icon-collect" in text
-    )
-
-
-def _looks_like_cnki_401_page(text: str) -> bool:
-    """Real CNKI 401 /「页面不存在」壳页。勿用 lone `>401<`——会被引次数误伤。"""
-    if "非常抱歉，您访问的页面不存在" in text:
-        return True
-    if "页面不存在" in text and ("401" in text or "HTTP Status" in text):
-        return True
-    # JSON error body from some gateways
-    if '"code":401' in text.replace(" ", "") or '"status":401' in text.replace(" ", ""):
-        return True
-    return False
-
-
-def dump_grid_debug(text: str, *, reason: str) -> Path | None:
-    try:
-        debug_dir = Path("data") / "debug"
-        debug_dir.mkdir(parents=True, exist_ok=True)
-        path = debug_dir / f"brief_grid_{int(time.time())}.html"
-        path.write_text(text or "", encoding="utf-8", errors="replace")
-        logger.error("saved brief/grid response (%s) to %s (len=%s)", reason, path, len(text or ""))
-        return path
-    except Exception as e:
-        logger.warning("dump brief/grid debug failed: %s", e)
-        return None
-
-
 def assert_grid_response_ok(text: str) -> None:
     detect_captcha_or_login(text)
-    if _looks_like_grid_list(text):
-        return
-    if _looks_like_cnki_401_page(text):
-        dump_grid_debug(text, reason="401-page")
+    if "非常抱歉，您访问的页面不存在" in text or ">401<" in text or "code\":401" in text:
         raise RateLimitError(
             "CNKI brief/grid 返回 401/无效页：请确认 Cookie 有效，并已完成暖场；"
             "该地址是 AJAX 接口，不能在浏览器直接打开"
         )
-    # 既不像列表也不像明确 401：可能是风控/改版 HTML，落盘后空列表流程可继续或停
-    if text and len(text) > 80:
-        dump_grid_debug(text, reason="unknown-body")
-        raise RateLimitError(
-            "CNKI brief/grid 返回非列表 HTML（可能 Cookie 失效或页面改版）；"
-            f"已写入 data/debug/，html_len={len(text)}"
-        )
+    if 'class="no-content"' in text or "暂无数据" in text:
+        return
 
 
-def warm_search_session(
-    client: CnkiHttpClient,
-    keyword: str,
-    *,
-    rlang: str = RLANG_CHINESE,
-) -> None:
+def warm_search_session(client: CnkiHttpClient, keyword: str) -> None:
     """模拟浏览器：首页 → ClientId → starter → 结果页，再请求 brief/grid。"""
-    rlang_n = normalize_rlang(rlang)
-    logger.info("warming CNKI search session for keyword=%s rlang=%s", keyword, rlang_n)
+    logger.info("warming CNKI search session for keyword=%s", keyword)
     client.get(HOME_URL, is_detail=False)
     try:
         # ClientID 接口返回 JSON，不走 HTML captcha 检测
@@ -263,28 +177,24 @@ def iter_search_rows(
     max_per_keyword: int,
     from_year: int | None,
     to_year: int | None,
-    rlang: str = RLANG_CHINESE,
 ) -> Iterator[dict]:
     """Yield list-row dicts for a keyword, respecting checkpoint and max_per_keyword.
 
     翻页必须带上一页返回的 hidTurnPage；不能只靠 pageNum 跳到第 N 页。
     续跑策略：从第 1 页重新翻，用 cnki_id/url 跳过已抓，直到凑满本轮额度。
     """
-    rlang_n = normalize_rlang(rlang)
-    cp_key = checkpoint_keyword_key(keyword, rlang_n)
-    already = checkpoint.get_keyword_fetched(cp_key)
+    already = checkpoint.get_keyword_fetched(keyword)
     remain = max_per_keyword - already
     if remain <= 0:
         logger.info(
-            "keyword=%s rlang=%s already fetched %s (>= max_per_keyword=%s), skip",
+            "keyword=%s already fetched %s (>= max_per_keyword=%s), skip",
             keyword,
-            rlang_n,
             already,
             max_per_keyword,
         )
         return
 
-    warm_search_session(client, keyword, rlang=rlang_n)
+    warm_search_session(client, keyword)
     page = 1
     yielded = 0
     turnpage = ""
@@ -298,20 +208,13 @@ def iter_search_rows(
             to_year,
             is_first=is_first,
             turnpage="" if is_first else turnpage,
-            rlang=rlang_n,
         )
         html = client_post_search(client, payload, referer=search_index_url(keyword))
         assert_grid_response_ok(html)
         rows = parse_list_html(html)
         if not rows:
             empty_streak += 1
-            logger.warning(
-                "keyword=%s rlang=%s page=%s empty list html_len=%s",
-                keyword,
-                rlang_n,
-                page,
-                len(html),
-            )
+            logger.warning("keyword=%s page=%s empty list html_len=%s", keyword, page, len(html))
             if empty_streak >= 2 or page == 1:
                 break
             # 尝试回到第一页重建 turnpage
@@ -321,23 +224,16 @@ def iter_search_rows(
         empty_streak = 0
 
         new_on_page = 0
-        skipped_done = 0
-        skipped_year = 0
         for row in rows:
             url = row.get("detail_url") or ""
             cnki_id = row.get("cnki_id")
             if checkpoint.is_done(url=url or None, cnki_id=cnki_id):
-                skipped_done += 1
                 continue
             if from_year and row.get("year") and int(row["year"]) < from_year:
-                skipped_year += 1
                 continue
             if to_year and row.get("year") and int(row["year"]) > to_year:
-                skipped_year += 1
                 continue
             row["crawl_keyword"] = keyword
-            row["checkpoint_key"] = cp_key
-            row["search_rlang"] = rlang_n
             yield row
             yielded += 1
             new_on_page += 1
@@ -345,18 +241,15 @@ def iter_search_rows(
                 break
 
         turnpage = _extract_turnpage(html)
-        checkpoint.set_keyword_page(cp_key, page + 1)
-        checkpoint.set_keyword_turnpage(cp_key, turnpage)
+        checkpoint.set_keyword_page(keyword, page + 1)
+        checkpoint.set_keyword_turnpage(keyword, turnpage)
         checkpoint.save()
         logger.info(
-            "keyword=%s rlang=%s page=%s rows=%s new=%s skip_done=%s skip_year=%s yielded=%s/%s turnpage=%s",
+            "keyword=%s page=%s rows=%s new=%s yielded=%s/%s turnpage=%s",
             keyword,
-            rlang_n,
             page,
             len(rows),
             new_on_page,
-            skipped_done,
-            skipped_year,
             yielded,
             remain,
             "yes" if turnpage else "no",
@@ -366,12 +259,7 @@ def iter_search_rows(
         if len(rows) < PAGE_SIZE:
             break
         if not turnpage:
-            logger.warning(
-                "keyword=%s rlang=%s page=%s missing hidTurnPage, stop pagination",
-                keyword,
-                rlang_n,
-                page,
-            )
+            logger.warning("keyword=%s page=%s missing hidTurnPage, stop pagination", keyword, page)
             break
         page += 1
 

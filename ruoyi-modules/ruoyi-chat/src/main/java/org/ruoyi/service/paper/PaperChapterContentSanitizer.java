@@ -13,8 +13,28 @@ final class PaperChapterContentSanitizer {
 
     private static final Pattern MARKDOWN_HEADING = Pattern.compile("^#{1,6}\\s*");
     private static final Pattern NUMERIC_PREFIX = Pattern.compile("^(\\d+(?:\\.\\d+)*)\\s*");
+    /** 致谢中常见的人工填写占位，如 [导师姓名]、【学校名称】 */
+    private static final Pattern ACK_ADVISOR_PLACEHOLDER = Pattern.compile(
+        "[\\[【(（]\\s*导师(?:姓名|名字|名称)?\\s*[\\]】)）]\\s*老师?");
+    private static final Pattern ACK_SCHOOL_PLACEHOLDER = Pattern.compile(
+        "[\\[【(（]\\s*学校(?:名称|名字)?\\s*[\\]】)）]");
 
     private PaperChapterContentSanitizer() {
+    }
+
+    /**
+     * 将致谢正文中的姓名/校名占位替换为泛称，避免读者再手动填写。
+     */
+    static String sanitizeAcknowledgementPlaceholders(String content) {
+        if (StringUtils.isBlank(content)) {
+            return content == null ? "" : content;
+        }
+        String result = content;
+        result = ACK_ADVISOR_PLACEHOLDER.matcher(result).replaceAll("导师");
+        result = ACK_SCHOOL_PLACEHOLDER.matcher(result).replaceAll("母校");
+        // 清理「感谢导师老师」等叠词
+        result = result.replace("导师老师", "导师");
+        return result;
     }
 
     static String stripDuplicateSectionHeading(String content, String chapterTitle) {

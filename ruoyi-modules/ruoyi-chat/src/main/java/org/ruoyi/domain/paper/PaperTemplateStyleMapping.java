@@ -35,9 +35,10 @@ public class PaperTemplateStyleMapping {
     }
 
     public String headingStyleId(int level) {
-        return switch (level) {
+        return switch (Math.max(1, Math.min(level, 5))) {
             case 1 -> heading1;
             case 2 -> heading2;
+            // 模板通常仅到 Heading3；四/五级套用三级样式，字号字体由 run 属性覆盖
             default -> heading3;
         };
     }

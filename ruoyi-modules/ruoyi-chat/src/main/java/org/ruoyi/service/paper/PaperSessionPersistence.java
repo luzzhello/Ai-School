@@ -169,6 +169,13 @@ public class PaperSessionPersistence {
         session.setSessionId(entity.getSessionId());
         session.setTitle(entity.getTitle());
         session.setStatus(entity.getStatus() == null ? PaperSession.Status.INIT : entity.getStatus());
+        session.setFormatTemplateId(entity.getFormatTemplateId());
+        session.setFormatOverrideJson(entity.getFormatOverrideJson());
+        session.setCustomFormatDocxPath(entity.getCustomFormatDocxPath());
+        session.setCustomFormatDocxName(entity.getCustomFormatDocxName());
+        session.setCustomFormatDocxSize(entity.getCustomFormatDocxSize());
+        session.setCustomFormatJson(entity.getCustomFormatJson());
+        session.setCustomPatchStyles(entity.getCustomPatchStyles());
 
         PaperSession.UserInputs inputs = session.getUserInputs();
         inputs.setSqlContent(entity.getSqlContent());
@@ -221,6 +228,13 @@ public class PaperSessionPersistence {
         entity.setCodeContent(session.getUserInputs().getCodeContent());
         entity.setSqlParsedJson(toJson(session.getSqlParsed()));
         entity.setTocJson(toJson(session.getToc()));
+        entity.setFormatTemplateId(session.getFormatTemplateId());
+        entity.setFormatOverrideJson(session.getFormatOverrideJson());
+        entity.setCustomFormatDocxPath(session.getCustomFormatDocxPath());
+        entity.setCustomFormatDocxName(session.getCustomFormatDocxName());
+        entity.setCustomFormatDocxSize(session.getCustomFormatDocxSize());
+        entity.setCustomFormatJson(session.getCustomFormatJson());
+        entity.setCustomPatchStyles(session.getCustomPatchStyles());
         entity.setUpdateTime(now);
         sessionMapper.updateById(entity);
 

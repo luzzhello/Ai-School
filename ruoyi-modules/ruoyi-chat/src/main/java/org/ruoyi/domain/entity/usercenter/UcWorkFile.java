@@ -31,6 +31,11 @@ public class UcWorkFile extends BaseEntity {
 
     private String fileType;
 
+    /**
+     * 子类型（如软件工程图：class / sequence / activity / usecase 等）
+     */
+    private String subType;
+
     private String thumbnail;
 
     private String contentJson;

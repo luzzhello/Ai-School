@@ -41,26 +41,29 @@ public class UserWorkFileServiceImpl implements IUserWorkFileService {
         if (query != null) {
             lqw.like(StringUtils.isNotBlank(query.getFileName()), UcWorkFile::getFileName, query.getFileName());
             lqw.eq(StringUtils.isNotBlank(query.getFileType()), UcWorkFile::getFileType, query.getFileType());
+            if (StringUtils.isNotBlank(query.getSubType())) {
+                final String subType = query.getSubType().trim();
+                // 优先匹配 sub_type 列；旧数据未回填时回退 content_json.diagramType
+                lqw.and(w -> w.eq(UcWorkFile::getSubType, subType)
+                    .or(i -> i.and(j -> j.isNull(UcWorkFile::getSubType).or().eq(UcWorkFile::getSubType, ""))
+                        .apply("JSON_UNQUOTE(JSON_EXTRACT(content_json, '$.diagramType')) = {0}", subType)));
+            }
         }
         lqw.orderByDesc(UcWorkFile::getUpdateTime);
-        boolean needDiagramType = query != null
-            && FILE_TYPE_SOFTWARE_DIAGRAM.equals(query.getFileType());
-        if (!needDiagramType) {
-            // 非软件工程图列表不拉 contentJson，避免大字段拖慢分页
-            lqw.select(
-                UcWorkFile::getFileId,
-                UcWorkFile::getUserId,
-                UcWorkFile::getFileName,
-                UcWorkFile::getDescription,
-                UcWorkFile::getFileType,
-                UcWorkFile::getThumbnail,
-                UcWorkFile::getFileSize,
-                UcWorkFile::getStorageType,
-                UcWorkFile::getCreateTime,
-                UcWorkFile::getUpdateTime
-            );
-        }
-        // 实体分页以便在软件工程图列表中读取 contentJson 摘要
+        // 列表不拉 contentJson；子类型走 sub_type 列（旧数据可 SQL 回填）
+        lqw.select(
+            UcWorkFile::getFileId,
+            UcWorkFile::getUserId,
+            UcWorkFile::getFileName,
+            UcWorkFile::getDescription,
+            UcWorkFile::getFileType,
+            UcWorkFile::getSubType,
+            UcWorkFile::getThumbnail,
+            UcWorkFile::getFileSize,
+            UcWorkFile::getStorageType,
+            UcWorkFile::getCreateTime,
+            UcWorkFile::getUpdateTime
+        );
         Page<UcWorkFile> entityPage = workFileMapper.selectPage(pageQuery.build(), lqw);
         List<UcWorkFileVo> rows = entityPage.getRecords().stream()
             .map(this::toListVo)
@@ -76,37 +79,55 @@ public class UserWorkFileServiceImpl implements IUserWorkFileService {
         vo.setFileName(file.getFileName());
         vo.setDescription(file.getDescription());
         vo.setFileType(file.getFileType());
+        vo.setSubType(file.getSubType());
         vo.setThumbnail(file.getThumbnail());
         vo.setFileSize(file.getFileSize());
         vo.setStorageType(file.getStorageType());
         vo.setCreateTime(file.getCreateTime());
         vo.setUpdateTime(file.getUpdateTime());
         if (FILE_TYPE_SOFTWARE_DIAGRAM.equals(file.getFileType())) {
-            vo.setDiagramType(extractSoftwareDiagramType(file.getContentJson()));
+            // diagramType 兼容旧前端字段；优先库列
+            vo.setDiagramType(StringUtils.isNotBlank(file.getSubType()) ? file.getSubType() : null);
         }
         return vo;
     }
 
-    /** 从软件工程图 contentJson 提取当前图类型（class/sequence/...） */
+    /** 从软件工程图 contentJson 提取图类型（保存时回填 / 兼容旧数据） */
     static String extractSoftwareDiagramType(String contentJson) {
         if (StringUtils.isBlank(contentJson)) {
             return null;
         }
         try {
             JSONObject obj = JSONUtil.parseObj(contentJson);
-            String type = obj.getStr("diagramType");
-            if (StringUtils.isNotBlank(type)) {
-                return type.trim();
+            String primary = obj.getStr("diagramType");
+            if (StringUtils.isNotBlank(primary)) {
+                return primary.trim();
             }
-            // 兼容旧数据：仅有 byType 时取唯一/首个键
             JSONObject byType = obj.getJSONObject("byType");
             if (byType != null && !byType.isEmpty()) {
-                return byType.keySet().iterator().next();
+                for (String key : byType.keySet()) {
+                    if (StringUtils.isNotBlank(key)) {
+                        return key.trim();
+                    }
+                }
             }
             return null;
         } catch (Exception ignored) {
             return null;
         }
+    }
+
+    private String resolveSubType(WorkFileSaveRequest request) {
+        if (request == null) {
+            return null;
+        }
+        if (StringUtils.isNotBlank(request.getSubType())) {
+            return request.getSubType().trim();
+        }
+        if (FILE_TYPE_SOFTWARE_DIAGRAM.equals(request.getFileType())) {
+            return extractSoftwareDiagramType(request.getContentJson());
+        }
+        return null;
     }
 
     @Override
@@ -118,6 +139,7 @@ public class UserWorkFileServiceImpl implements IUserWorkFileService {
     @Override
     public Long save(Long userId, WorkFileSaveRequest request) {
         long size = request.getContentJson() != null ? request.getContentJson().length() : 0L;
+        String subType = resolveSubType(request);
         if (request.getFileId() != null) {
             UcWorkFile existing = requireOwned(userId, request.getFileId());
             existing.setFileName(request.getFileName());
@@ -127,12 +149,18 @@ public class UserWorkFileServiceImpl implements IUserWorkFileService {
             if (StringUtils.isNotBlank(request.getFileType())) {
                 existing.setFileType(request.getFileType());
             }
+            if (request.getSubType() != null || subType != null) {
+                existing.setSubType(subType != null ? subType : request.getSubType());
+            }
             if (request.getThumbnail() != null) {
                 existing.setThumbnail(request.getThumbnail());
             }
             if (request.getContentJson() != null) {
                 existing.setContentJson(request.getContentJson());
                 existing.setFileSize(size);
+                if (StringUtils.isBlank(existing.getSubType()) && FILE_TYPE_SOFTWARE_DIAGRAM.equals(existing.getFileType())) {
+                    existing.setSubType(extractSoftwareDiagramType(request.getContentJson()));
+                }
             }
             workFileMapper.updateById(existing);
             return existing.getFileId();
@@ -142,6 +170,7 @@ public class UserWorkFileServiceImpl implements IUserWorkFileService {
         file.setFileName(request.getFileName());
         file.setDescription(request.getDescription());
         file.setFileType(request.getFileType());
+        file.setSubType(subType);
         file.setThumbnail(request.getThumbnail());
         file.setContentJson(request.getContentJson());
         file.setFileSize(size);

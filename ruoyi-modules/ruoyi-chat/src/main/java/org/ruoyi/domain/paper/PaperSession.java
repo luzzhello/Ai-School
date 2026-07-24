@@ -57,6 +57,25 @@ public class PaperSession implements Serializable {
     /** 流程状态，见 {@link Status} */
     private String status = Status.INIT;
 
+    /** 绑定的格式模板 id */
+    private Long formatTemplateId;
+
+    /** 会话级格式覆盖 JSON（与模板 merge 后生效） */
+    private String formatOverrideJson;
+
+    /** 会话自定义排版 docx 相对路径；非空 = 自定义模式 */
+    private String customFormatDocxPath;
+
+    private String customFormatDocxName;
+
+    private Long customFormatDocxSize;
+
+    /** 自定义版式主配置 JSON */
+    private String customFormatJson;
+
+    /** 1=强制 patch 样式；0=不 patch；自定义模式默认 1 */
+    private Integer customPatchStyles;
+
     /** 创建时间戳（毫秒），用于会话过期清理 */
     private long createTime = System.currentTimeMillis();
 

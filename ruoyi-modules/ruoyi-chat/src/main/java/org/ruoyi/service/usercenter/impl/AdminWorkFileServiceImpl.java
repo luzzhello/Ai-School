@@ -46,6 +46,7 @@ public class AdminWorkFileServiceImpl implements IAdminWorkFileService {
             lqw.eq(bo.getUserId() != null, UcWorkFile::getUserId, bo.getUserId());
             lqw.like(StringUtils.isNotBlank(bo.getFileName()), UcWorkFile::getFileName, bo.getFileName());
             lqw.eq(StringUtils.isNotBlank(bo.getFileType()), UcWorkFile::getFileType, bo.getFileType());
+            lqw.eq(StringUtils.isNotBlank(bo.getSubType()), UcWorkFile::getSubType, bo.getSubType());
             adminHelper.applyCreateTimeRange(lqw, UcWorkFile::getCreateTime, bo);
         }
         lqw.orderByDesc(UcWorkFile::getUpdateTime);
@@ -60,6 +61,7 @@ public class AdminWorkFileServiceImpl implements IAdminWorkFileService {
         vo.setFileName(file.getFileName());
         vo.setDescription(file.getDescription());
         vo.setFileType(file.getFileType());
+        vo.setSubType(file.getSubType());
         vo.setThumbnail(file.getThumbnail());
         vo.setFileSize(file.getFileSize());
         vo.setStorageType(file.getStorageType());

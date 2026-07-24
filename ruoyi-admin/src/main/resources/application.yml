@@ -176,6 +176,8 @@ tenant:
     - paper_session
     - paper_reference
     - paper_chapter
+    - paper_format_template
+    - aigc_detect_report
     - lit_paper
     - lit_paper_ref
     - lit_paper_en
@@ -286,6 +288,9 @@ xss:
     - /system/notice
     # 论文章节正文含 Markdown / 插图编辑标记，禁止 cleanHtmlTag 剥内容
     - /api/paper/chapter/save
+    # 云端作品 contentJson 含 Draw.io XML，禁止 XSS 清洗破坏图形数据
+    - /usercenter/files
+    - /api/usercenter/files
 
 --- # 分布式锁 lock4j 全局配置
 lock4j:

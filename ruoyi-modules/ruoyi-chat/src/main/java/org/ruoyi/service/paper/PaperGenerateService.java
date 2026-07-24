@@ -269,6 +269,18 @@ public class PaperGenerateService {
             && !PaperReferenceContentHelper.isReferenceChapter(chapterId, chapterNode)) {
             content = PaperChapterContentSanitizer.stripDuplicateSectionHeading(content, chapterTitle);
         }
+        if (PaperChapterPrompts.isAcknowledgementChapter(chapterId, chapterNode)) {
+            content = PaperChapterContentSanitizer.sanitizeAcknowledgementPlaceholders(content);
+        }
+        // 引用角标后质检：摘要/致谢去掉数字角标；参考文献列表节保留；其余节仅保留已确认序号
+        if (PaperChapterPrompts.isAbstractChapter(chapterId, chapterNode)
+            || PaperChapterPrompts.isAcknowledgementChapter(chapterId, chapterNode)) {
+            content = PaperCitationSanitizer.stripAllNumericCitations(content);
+        } else if (!PaperReferenceContentHelper.isReferenceChapter(chapterId, chapterNode)) {
+            content = PaperCitationSanitizer.sanitizeToValidIndexes(
+                content, PaperCitationSanitizer.collectValidIndexes(
+                    session == null ? null : session.getReferences()));
+        }
         final String finalContent = content;
         paperSessionStore.update(sessionId, s -> {
             s.getGeneratedContent().put(chapterId, finalContent);

@@ -24,6 +24,8 @@ public class UcWorkFileAdminVo implements Serializable {
 
     private String fileType;
 
+    private String subType;
+
     private String thumbnail;
 
     private Long fileSize;

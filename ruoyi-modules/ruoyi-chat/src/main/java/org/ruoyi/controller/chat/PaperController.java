@@ -13,15 +13,21 @@ import org.ruoyi.domain.dto.request.PaperParseSqlRequest;
 import org.ruoyi.domain.dto.request.PaperConfirmReferencesRequest;
 import org.ruoyi.domain.dto.request.PaperGenerateChapterRequest;
 import org.ruoyi.domain.dto.request.PaperReferencesRequest;
+import org.ruoyi.domain.dto.request.PaperRewriteSegmentRequest;
 import org.ruoyi.domain.dto.request.PaperSaveChapterRequest;
+import org.ruoyi.domain.dto.request.PaperSessionFormatUpdateRequest;
 import org.ruoyi.domain.dto.request.PaperTocRequest;
 import org.ruoyi.domain.dto.request.PaperUpdateTocRequest;
 import org.ruoyi.domain.dto.request.PaperUpdateInputsRequest;
 import org.ruoyi.domain.dto.response.PaperParseSqlResponse;
+import org.ruoyi.domain.dto.response.PaperRewriteSegmentResultVo;
+import org.ruoyi.domain.dto.response.PaperSessionFormatVo;
 import org.ruoyi.domain.paper.PaperSession;
 import org.ruoyi.domain.paper.PaperSessionSummary;
 import org.ruoyi.domain.paper.PaperSession.SqlParsed;
 import org.ruoyi.domain.paper.TocNode;
+import org.ruoyi.domain.paper.format.PaperFormatConfig;
+import org.ruoyi.domain.paper.format.PaperFormatDefaults;
 import org.ruoyi.service.paper.*;
 import org.springframework.core.io.Resource;
 import org.springframework.http.HttpHeaders;
@@ -32,8 +38,10 @@ import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RequestPart;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.multipart.MultipartFile;
@@ -43,6 +51,7 @@ import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 
 /**
  * 论文生成智能体。
@@ -59,8 +68,12 @@ public class PaperController {
     private final PaperTocService paperTocService;
     private final PaperGenerateService paperGenerateService;
     private final WordExportService wordExportService;
+    private final PaperDefensePptService paperDefensePptService;
     private final PaperAssetService paperAssetService;
     private final PaperSqlErOptimizer paperSqlErOptimizer;
+    private final PaperFormatTemplateService paperFormatTemplateService;
+    private final PaperSessionCustomFormatService paperSessionCustomFormatService;
+    private final PaperRewriteService paperRewriteService;
 
     /**
      * 创建论文生成会话。题目与基础输入可选，创建后返回 sessionId。
@@ -125,6 +138,14 @@ public class PaperController {
     }
 
     /**
+     * 论文写作选区改写：扩写 / 缩写 / 润色（降重、降 AI 率请走既有 document 接口）。
+     */
+    @PostMapping("/rewrite-segment")
+    public R<PaperRewriteSegmentResultVo> rewriteSegment(@RequestBody @Valid PaperRewriteSegmentRequest request) {
+        return R.ok(paperRewriteService.rewrite(request));
+    }
+
+    /**
      * 删除会话及数据库记录。
      */
     @DeleteMapping("/session/{sessionId}")
@@ -133,6 +154,136 @@ public class PaperController {
         paperSessionStore.require(sessionId, userId);
         paperSessionStore.remove(sessionId);
         return R.ok();
+    }
+
+    /**
+     * 查询会话排版配置（模板、覆盖、合并结果、内置默认）。
+     */
+    @GetMapping("/session/{sessionId}/format")
+    public R<PaperSessionFormatVo> getSessionFormat(@PathVariable String sessionId) {
+        Long userId = LoginHelper.getUserId();
+        PaperSession session = paperSessionStore.require(sessionId, userId);
+        return R.ok(toSessionFormatVo(session));
+    }
+
+    /**
+     * 更新会话排版配置（切换模板 / 稀疏覆盖 / 清空覆盖）。
+     */
+    @PutMapping("/session/{sessionId}/format")
+    public R<PaperSessionFormatVo> updateSessionFormat(
+        @PathVariable String sessionId,
+        @RequestBody(required = false) PaperSessionFormatUpdateRequest request) {
+        Long userId = LoginHelper.getUserId();
+        PaperSession session = paperSessionStore.require(sessionId, userId);
+        if (request == null) {
+            request = new PaperSessionFormatUpdateRequest();
+        }
+
+        boolean templateIdSpecified = request.isTemplateIdSpecified();
+        Long requestedTemplateId = request.getTemplateId();
+        Boolean clearOverride = request.getClearOverride();
+        if (templateIdSpecified
+            && !Objects.equals(session.getFormatTemplateId(), requestedTemplateId)
+            && clearOverride == null) {
+            clearOverride = true;
+        }
+
+        PaperFormatConfig override = request.getOverride();
+        Boolean finalClearOverride = clearOverride;
+        paperSessionStore.update(sessionId, s -> {
+            if (templateIdSpecified) {
+                if (PaperSessionCustomFormatService.isCustomMode(s)) {
+                    paperSessionCustomFormatService.clearCustomDocx(s, userId);
+                }
+                s.setFormatTemplateId(requestedTemplateId);
+            }
+            if (Boolean.TRUE.equals(finalClearOverride)) {
+                s.setFormatOverrideJson(null);
+            } else if (override != null) {
+                s.setFormatOverrideJson(PaperFormatMerger.toJson(override));
+                // 校验合并结果（含自定义模式）
+                paperFormatTemplateService.resolveEffective(s);
+            }
+        });
+        return R.ok(toSessionFormatVo(paperSessionStore.require(sessionId, userId)));
+    }
+
+    /**
+     * 上传会话自定义本校排版模板（docx + 可选 format / patchStyles）。
+     */
+    @PostMapping(value = "/session/{sessionId}/format/custom-docx", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
+    public R<PaperSessionFormatVo> uploadCustomFormatDocx(
+        @PathVariable String sessionId,
+        @RequestPart("file") MultipartFile file,
+        @RequestParam(value = "format", required = false) String formatJson,
+        @RequestParam(value = "patchStyles", required = false) Boolean patchStyles) {
+        Long userId = LoginHelper.getUserId();
+        paperSessionStore.require(sessionId, userId);
+        PaperFormatConfig format = null;
+        if (StringUtils.isNotBlank(formatJson)) {
+            try {
+                format = PaperFormatMerger.parseJson(formatJson);
+            } catch (IllegalArgumentException e) {
+                throw new ServiceException(e.getMessage());
+            }
+        }
+        PaperFormatConfig finalFormat = format;
+        paperSessionStore.update(sessionId, s ->
+            paperSessionCustomFormatService.saveCustomDocx(s, userId, file, finalFormat, patchStyles));
+        return R.ok(toSessionFormatVo(paperSessionStore.require(sessionId, userId)));
+    }
+
+    /**
+     * 清除会话自定义排版模板。
+     */
+    @DeleteMapping("/session/{sessionId}/format/custom-docx")
+    public R<PaperSessionFormatVo> deleteCustomFormatDocx(@PathVariable String sessionId) {
+        Long userId = LoginHelper.getUserId();
+        paperSessionStore.require(sessionId, userId);
+        paperSessionStore.update(sessionId, s ->
+            paperSessionCustomFormatService.clearCustomDocx(s, userId));
+        return R.ok(toSessionFormatVo(paperSessionStore.require(sessionId, userId)));
+    }
+
+    /**
+     * 重置会话排版覆盖（仅清空 formatOverrideJson，保留模板绑定 / 自定义 docx）。
+     */
+    @PostMapping("/session/{sessionId}/format/reset")
+    public R<PaperSessionFormatVo> resetSessionFormat(@PathVariable String sessionId) {
+        Long userId = LoginHelper.getUserId();
+        paperSessionStore.require(sessionId, userId);
+        paperSessionStore.update(sessionId, s -> s.setFormatOverrideJson(null));
+        return R.ok(toSessionFormatVo(paperSessionStore.require(sessionId, userId)));
+    }
+
+    private PaperSessionFormatVo toSessionFormatVo(PaperSession session) {
+        PaperSessionFormatVo vo = new PaperSessionFormatVo();
+        boolean custom = PaperSessionCustomFormatService.isCustomMode(session);
+        vo.setMode(custom ? "custom" : "school");
+        vo.setHasCustomDocx(custom);
+        vo.setCustomDocxName(session.getCustomFormatDocxName());
+        vo.setCustomPatchStyles(custom
+            && (session.getCustomPatchStyles() == null || session.getCustomPatchStyles() != 0));
+        if (StringUtils.isNotBlank(session.getCustomFormatJson())) {
+            try {
+                vo.setCustomFormat(PaperFormatMerger.parseJson(session.getCustomFormatJson()));
+            } catch (IllegalArgumentException e) {
+                throw new ServiceException(e.getMessage());
+            }
+        }
+        vo.setTemplateId(session.getFormatTemplateId());
+        if (StringUtils.isNotBlank(session.getFormatOverrideJson())) {
+            try {
+                vo.setOverride(PaperFormatMerger.parseJson(session.getFormatOverrideJson()));
+            } catch (IllegalArgumentException e) {
+                throw new ServiceException(e.getMessage());
+            }
+        } else {
+            vo.setOverride(null);
+        }
+        vo.setEffective(paperFormatTemplateService.resolveEffective(session));
+        vo.setDefaults(PaperFormatDefaults.dalianOcean());
+        return vo;
     }
 
     /**
@@ -314,6 +465,24 @@ public class PaperController {
                 "attachment; filename=\"" + encoded + "\"; filename*=UTF-8''" + encoded)
             .header(HttpHeaders.CONTENT_TYPE,
                 "application/vnd.openxmlformats-officedocument.wordprocessingml.document")
+            .body(data);
+    }
+
+    /**
+     * 导出答辩 PPT（.pptx）：按论文大纲拆页，从已生成章节提炼要点。
+     */
+    @GetMapping("/export-ppt/{sessionId}")
+    public ResponseEntity<byte[]> exportPpt(@PathVariable String sessionId) {
+        Long userId = LoginHelper.getUserId();
+        paperSessionStore.require(sessionId, userId);
+        byte[] data = paperDefensePptService.export(sessionId);
+        String fileName = paperDefensePptService.resolveTitle(sessionId) + "-答辩.pptx";
+        String encoded = URLEncoder.encode(fileName, StandardCharsets.UTF_8).replace("+", "%20");
+        return ResponseEntity.ok()
+            .header(HttpHeaders.CONTENT_DISPOSITION,
+                "attachment; filename=\"" + encoded + "\"; filename*=UTF-8''" + encoded)
+            .header(HttpHeaders.CONTENT_TYPE,
+                "application/vnd.openxmlformats-officedocument.presentationml.presentation")
             .body(data);
     }
 }

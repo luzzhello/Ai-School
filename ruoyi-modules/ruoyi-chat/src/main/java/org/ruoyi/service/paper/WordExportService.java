@@ -68,6 +68,8 @@ import org.ruoyi.domain.paper.PaperSession;
 import org.ruoyi.domain.paper.PaperTemplateStyleMapping;
 import org.ruoyi.domain.paper.Reference;
 import org.ruoyi.domain.paper.TocNode;
+import org.ruoyi.domain.paper.format.PaperFormatConfig;
+import org.ruoyi.domain.paper.format.PaperFormatDefaults;
 import org.springframework.stereotype.Service;
 
 import java.io.ByteArrayInputStream;
@@ -90,10 +92,10 @@ import java.util.regex.Pattern;
 /**
  * 论文生成智能体——Word(.docx) 导出服务。
  * <p>
- * 读取会话目录与已生成内容，按大连海洋大学本科毕业论文（设计）版式组装 docx：
- * A4；左30/右25/上30/下25mm；正文五号宋体、固定行距18磅；标题黑体不加粗（一/二/三级）；
+ * 读取会话目录与已生成内容，按会话有效排版配置（默认等同大连海洋大学版式）组装 docx：
+ * A4；页边距/正文字体字号/行距/标题样式来自 {@link PaperFormatConfig}；
  * 不加固定页眉文案（学校名/题目由用户模板自行决定）；
- * 页码从目录起编（章前罗马、第一章起阿拉伯），小五号宋体居中；三线表。
+ * 页码从目录起编（章前罗马、第一章起阿拉伯），页脚居中；三线表。
  * 对应 PRD「3.6 文档排版与导出模块」。
  */
 @Slf4j
@@ -107,50 +109,37 @@ public class WordExportService {
         ROMAN,
         ARABIC
     }
+
+    /** 与 {@link PaperFormatDefaults#dalianOcean()} 一致的兜底常量（仅当 effective 字段为空时使用） */
     private static final String FONT_BODY = "宋体";
     private static final String FONT_HEADING = "黑体";
     private static final String FONT_CODE = "Consolas";
     /** 英文 / 数字 / 表内西文 */
     private static final String FONT_TABLE = "Times New Roman";
-
-    /**
-     * 字号（pt）：三号 16 / 小四 12 / 五号 10.5 / 小五 9 / 小二 18。
-     * 正文行距固定 18 磅（EXACT）。
-     */
-    private static final double FONT_SIZE_BODY = 10.5;       // 五号
-    private static final double FONT_SIZE_TITLE_XIAO_ER = 18;  // 小二（摘要英文题目）
-    private static final double FONT_SIZE_COVER_TITLE = 18;
-    private static final double FONT_SIZE_H1 = 16;           // 三号
-    private static final double FONT_SIZE_H2 = 12;           // 小四
-    private static final double FONT_SIZE_H3 = 10.5;         // 五号
-    private static final double FONT_SIZE_CAPTION = 9;       // 小五（图/表题）
-    private static final double FONT_SIZE_FOOTER = 9;        // 小五（页脚）
-    private static final double FONT_SIZE_TABLE = 10.5;      // 表内五号
-    private static final int BODY_LINE_SPACING_TWIPS = 360;  // 18 磅
-    /** 标题段前/段后约 1 行（twips） */
-    private static final int HEADING_SPACING_LINE = 240;
-    /** 正文首行缩进 2 字符（五号约 420 twips） */
-    private static final int BODY_FIRST_LINE_CHARS = 200;
-    private static final int BODY_FIRST_LINE_TWIPS = 420;
+    private static final double FONT_SIZE_BODY = 10.5;
+    private static final double FONT_SIZE_TITLE = 18;
+    private static final double FONT_SIZE_H1 = 16;
+    private static final double FONT_SIZE_H2 = 12;
+    private static final double FONT_SIZE_H3 = 10.5;
+    private static final double FONT_SIZE_CAPTION = 9;
+    private static final double FONT_SIZE_FOOTER = 9;
+    private static final double FONT_SIZE_TABLE = 10.5;
+    private static final double BODY_LINE_SPACING_PT = 18;
+    private static final double HEADING_SPACING_PT = 12;
+    private static final int BODY_FIRST_LINE_INDENT_CHARS = 2;
+    private static final double MARGIN_LEFT_MM = 30;
+    private static final double MARGIN_RIGHT_MM = 25;
+    private static final double MARGIN_TOP_MM = 30;
+    private static final double MARGIN_BOTTOM_MM = 25;
 
     /** A4 尺寸（twips）：210mm × 297mm */
     private static final int A4_WIDTH = 11906;
     private static final int A4_HEIGHT = 16838;
-    /** 边距：左 30 / 右 25 / 上 30 / 下 25（mm→twips，1mm≈56.7） */
-    private static final int MARGIN_LEFT = 1701;
-    private static final int MARGIN_RIGHT = 1418;
-    private static final int MARGIN_TOP = 1701;
-    private static final int MARGIN_BOTTOM = 1418;
-    /** 页眉边距 23mm、页脚边距 18mm */
+    /** 页眉边距 23mm、页脚边距 18mm（一期不进 format_json） */
     private static final int HEADER_DISTANCE = 1304;
     private static final int FOOTER_DISTANCE = 1021;
-    /** 目录行右对齐制表位（正文区右边界） */
-    private static final int TOC_TAB_POS = A4_WIDTH - MARGIN_LEFT - MARGIN_RIGHT;
-    /** 正文区可用宽度（pt）：210−30−25=155mm */
-    private static final int CONTENT_MAX_WIDTH_PT = 439;
+    /** 正文区可用高度近似（pt），含页眉页脚留白 */
     private static final int CONTENT_MAX_HEIGHT_PT = 620;
-    /** 表格可用宽度（twips）= 页宽 − 左右边距 */
-    private static final int TABLE_WIDTH_TWIPS = A4_WIDTH - MARGIN_LEFT - MARGIN_RIGHT;
     /** 单元格左右内边距（twips），避免文字贴边 */
     private static final int TABLE_CELL_PAD_TWIPS = 40;
     /**
@@ -194,10 +183,16 @@ public class WordExportService {
     private final PaperSessionStore paperSessionStore;
     private final PaperAssetService paperAssetService;
     private final PaperTemplateService paperTemplateService;
+    private final PaperFormatTemplateService paperFormatTemplateService;
+    private final PaperSessionCustomFormatService paperSessionCustomFormatService;
     private final PaperExportLayoutEstimator layoutEstimator = new PaperExportLayoutEstimator();
 
     /** 单次导出线程内使用的模板样式映射 */
     private final ThreadLocal<PaperTemplateStyleMapping> exportTemplateStyles = new ThreadLocal<>();
+    /** 单次导出线程内有效排版配置 */
+    private final ThreadLocal<PaperFormatConfig> exportFormat = new ThreadLocal<>();
+    /** 正文段落样式上下文：致谢章使用独立字体字号 */
+    private final ThreadLocal<Boolean> acknowledgmentBody = new ThreadLocal<>();
 
     /**
      * 导出论文为 docx 字节数组。
@@ -210,11 +205,13 @@ public class WordExportService {
         if (session == null) {
             throw new ServiceException("会话不存在或已过期");
         }
-        try (InputStream templateIn = paperTemplateService.openTemplateInputStream();
+        PaperFormatConfig effective = paperFormatTemplateService.resolveEffective(session);
+        exportFormat.set(effective);
+        try (InputStream templateIn = openExportTemplate(session);
              XWPFDocument doc = openCleanTemplateDocument(templateIn)) {
             PaperTemplateStyleMapping templateStyles = paperTemplateService.getStyleMapping();
             exportTemplateStyles.set(templateStyles);
-            applyDalianOceanPageSetup(doc);
+            applyPageSetup(doc);
             applyHeaderAndFooter(doc);
             patchTemplateStyles(doc);
             writeTitle(doc, session.getTitle(), templateStyles);
@@ -230,12 +227,265 @@ public class WordExportService {
             throw new ServiceException("导出 Word 失败");
         } finally {
             exportTemplateStyles.remove();
+            exportFormat.remove();
+            acknowledgmentBody.remove();
+        }
+    }
+
+    private InputStream openExportTemplate(PaperSession session) {
+        if (PaperSessionCustomFormatService.isCustomMode(session)) {
+            return paperSessionCustomFormatService.openCustomDocx(session);
+        }
+        try {
+            return paperFormatTemplateService.openDocx(session.getFormatTemplateId());
+        } catch (Exception e) {
+            log.warn("打开排版模板 docx 失败，回退全局模板: {}", e.getMessage());
+            return paperTemplateService.openTemplateInputStream();
         }
     }
 
     private PaperTemplateStyleMapping currentTemplateStyles() {
         PaperTemplateStyleMapping styles = exportTemplateStyles.get();
         return styles != null ? styles : PaperTemplateStyleMapping.defaults();
+    }
+
+    /** 当前导出有效配置；未设置时回退大连海洋默认 */
+    private PaperFormatConfig fmt() {
+        PaperFormatConfig config = exportFormat.get();
+        return config != null ? config : PaperFormatDefaults.dalianOcean();
+    }
+
+    private String fontBody() {
+        return firstNonBlank(fmt().getFont().getBodyEastAsia(), FONT_BODY);
+    }
+
+    private String fontBodyAscii() {
+        return firstNonBlank(fmt().getFont().getBodyAscii(), FONT_TABLE);
+    }
+
+    private String fontHeading() {
+        return firstNonBlank(fmt().getFont().getHeadingEastAsia(), FONT_HEADING);
+    }
+
+    /** 按标题级别取东文字体，未配置则回退统一标题字体 */
+    private String fontHeadingAt(int level) {
+        var font = fmt().getFont();
+        String specific = switch (Math.max(1, Math.min(level, 5))) {
+            case 1 -> font.getHeading1EastAsia();
+            case 2 -> font.getHeading2EastAsia();
+            case 3 -> font.getHeading3EastAsia();
+            case 4 -> font.getHeading4EastAsia();
+            case 5 -> font.getHeading5EastAsia();
+            default -> null;
+        };
+        return firstNonBlank(specific, fontHeading());
+    }
+
+    private String fontHeadingAscii() {
+        return firstNonBlank(fmt().getFont().getHeadingAscii(), FONT_TABLE);
+    }
+
+    private String fontTableEastAsia() {
+        return firstNonBlank(fmt().getFont().getTableEastAsia(), FONT_BODY);
+    }
+
+    private String fontTableAscii() {
+        return firstNonBlank(fmt().getFont().getTableAscii(), FONT_TABLE);
+    }
+
+    private String fontCode() {
+        return firstNonBlank(fmt().getFont().getCode(), FONT_CODE);
+    }
+
+    private String fontFooter() {
+        return firstNonBlank(fmt().getFont().getFooterEastAsia(), FONT_BODY);
+    }
+
+    private String fontAbstract() {
+        return firstNonBlank(fmt().getFont().getAbstractEastAsia(), fontBody());
+    }
+
+    private String fontKeyword() {
+        return firstNonBlank(fmt().getFont().getKeywordEastAsia(), fontBody());
+    }
+
+    private String fontReference() {
+        return firstNonBlank(fmt().getFont().getReferenceEastAsia(), fontBody());
+    }
+
+    private String fontAcknowledgment() {
+        return firstNonBlank(fmt().getFont().getAcknowledgmentEastAsia(), fontBody());
+    }
+
+    private double fontSizeBody() {
+        return firstNonNull(fmt().getFontSize().getBody(), FONT_SIZE_BODY);
+    }
+
+    private double fontSizeTitle() {
+        return firstNonNull(fmt().getFontSize().getTitle(), FONT_SIZE_TITLE);
+    }
+
+    private double fontSizeH1() {
+        return firstNonNull(fmt().getFontSize().getHeading1(), FONT_SIZE_H1);
+    }
+
+    private double fontSizeH2() {
+        return firstNonNull(fmt().getFontSize().getHeading2(), FONT_SIZE_H2);
+    }
+
+    private double fontSizeH3() {
+        return firstNonNull(fmt().getFontSize().getHeading3(), FONT_SIZE_H3);
+    }
+
+    private double fontSizeH4() {
+        return firstNonNull(fmt().getFontSize().getHeading4(), fontSizeH3());
+    }
+
+    private double fontSizeH5() {
+        return firstNonNull(fmt().getFontSize().getHeading5(), fontSizeH3());
+    }
+
+    private double fontSizeHeadingAt(int level) {
+        return switch (Math.max(1, Math.min(level, 5))) {
+            case 1 -> fontSizeH1();
+            case 2 -> fontSizeH2();
+            case 3 -> fontSizeH3();
+            case 4 -> fontSizeH4();
+            case 5 -> fontSizeH5();
+            default -> fontSizeH3();
+        };
+    }
+
+    private double fontSizeCaption() {
+        return firstNonNull(fmt().getFontSize().getCaption(), FONT_SIZE_CAPTION);
+    }
+
+    private double fontSizeFooter() {
+        return firstNonNull(fmt().getFontSize().getFooter(), FONT_SIZE_FOOTER);
+    }
+
+    private double fontSizeTable() {
+        return firstNonNull(fmt().getFontSize().getBody(), FONT_SIZE_TABLE);
+    }
+
+    private double fontSizeReference() {
+        return firstNonNull(fmt().getFontSize().getReference(), FONT_SIZE_BODY);
+    }
+
+    private double fontSizeAbstractLabel() {
+        return firstNonNull(fmt().getFontSize().getAbstractLabel(), FONT_SIZE_BODY);
+    }
+
+    private double fontSizeAbstractBody() {
+        return firstNonNull(fmt().getFontSize().getAbstractBody(), fontSizeBody());
+    }
+
+    private double fontSizeKeyword() {
+        return firstNonNull(fmt().getFontSize().getKeyword(), fontSizeBody());
+    }
+
+    private double fontSizeAcknowledgment() {
+        return firstNonNull(fmt().getFontSize().getAcknowledgment(), fontSizeBody());
+    }
+
+    /** 正文区页脚格式：numeric / roman / dash / none */
+    private String footerFormat() {
+        PaperFormatConfig.HeaderFooter hf = fmt().nestedHeaderFooter();
+        if (hf == null || StringUtils.isBlank(hf.getFooterFormat())) {
+            return "numeric";
+        }
+        return hf.getFooterFormat().trim().toLowerCase();
+    }
+
+    private PageNumberMode resolveBodyPageNumberMode() {
+        return switch (footerFormat()) {
+            case "none" -> PageNumberMode.NONE;
+            case "roman" -> PageNumberMode.ROMAN;
+            default -> PageNumberMode.ARABIC;
+        };
+    }
+
+    private boolean footerUsesDash() {
+        return "dash".equals(footerFormat());
+    }
+
+    private boolean footerEnabled() {
+        return !"none".equals(footerFormat());
+    }
+
+    private int marginLeftTwips() {
+        return mmToTwips(firstNonNull(fmt().getPage().getMarginLeftMm(), MARGIN_LEFT_MM));
+    }
+
+    private int marginRightTwips() {
+        return mmToTwips(firstNonNull(fmt().getPage().getMarginRightMm(), MARGIN_RIGHT_MM));
+    }
+
+    private int marginTopTwips() {
+        return mmToTwips(firstNonNull(fmt().getPage().getMarginTopMm(), MARGIN_TOP_MM));
+    }
+
+    private int marginBottomTwips() {
+        return mmToTwips(firstNonNull(fmt().getPage().getMarginBottomMm(), MARGIN_BOTTOM_MM));
+    }
+
+    private int contentWidthTwips() {
+        return A4_WIDTH - marginLeftTwips() - marginRightTwips();
+    }
+
+    private int tocTabPos() {
+        return contentWidthTwips();
+    }
+
+    private int tableWidthTwips() {
+        return contentWidthTwips();
+    }
+
+    /** 正文区可用宽度（pt）= 纸宽 − 左右边距 */
+    private int contentMaxWidthPt() {
+        double left = firstNonNull(fmt().getPage().getMarginLeftMm(), MARGIN_LEFT_MM);
+        double right = firstNonNull(fmt().getPage().getMarginRightMm(), MARGIN_RIGHT_MM);
+        return (int) Math.round((210.0 - left - right) * 72.0 / 25.4);
+    }
+
+    private int bodyFirstLineCharsHundredths() {
+        int chars = firstNonNull(fmt().getParagraph().getFirstLineIndentChars(), BODY_FIRST_LINE_INDENT_CHARS);
+        return chars * 100;
+    }
+
+    private int bodyFirstLineTwips() {
+        int chars = firstNonNull(fmt().getParagraph().getFirstLineIndentChars(), BODY_FIRST_LINE_INDENT_CHARS);
+        return (int) Math.round(chars * fontSizeBody() * 20.0);
+    }
+
+    private static int mmToTwips(double mm) {
+        // 与历史常量一致：1mm≈56.7 twips（30→1701，25→1418）
+        return (int) Math.round(mm * 56.7);
+    }
+
+    private static int ptToTwips(double pt) {
+        return (int) Math.round(pt * 20.0);
+    }
+
+    private static String firstNonBlank(String value, String fallback) {
+        return StringUtils.isNotBlank(value) ? value : fallback;
+    }
+
+    private static <T> T firstNonNull(T value, T fallback) {
+        return value != null ? value : fallback;
+    }
+
+    private static ParagraphAlignment resolveAlign(String align, ParagraphAlignment fallback) {
+        if (align == null) {
+            return fallback;
+        }
+        return switch (align.trim().toLowerCase(Locale.ROOT)) {
+            case "left" -> ParagraphAlignment.LEFT;
+            case "center" -> ParagraphAlignment.CENTER;
+            case "right" -> ParagraphAlignment.RIGHT;
+            case "both", "justify" -> ParagraphAlignment.BOTH;
+            default -> fallback;
+        };
     }
 
     /**
@@ -289,6 +539,18 @@ public class WordExportService {
             settings.unsetHideGrammaticalErrors();
         }
         settings.addNewHideGrammaticalErrors();
+        // 奇偶页眉不同时开启 evenAndOddHeaders
+        PaperFormatConfig.HeaderFooter hf = fmt().nestedHeaderFooter();
+        String odd = hf == null ? null : StringUtils.trim(hf.getOddHeader());
+        String even = hf == null ? null : StringUtils.trim(hf.getEvenHeader());
+        boolean needEvenOdd = StringUtils.isNotBlank(odd) && StringUtils.isNotBlank(even)
+            && !odd.equals(even);
+        if (settings.isSetEvenAndOddHeaders()) {
+            settings.unsetEvenAndOddHeaders();
+        }
+        if (needEvenOdd) {
+            settings.addNewEvenAndOddHeaders();
+        }
     }
 
     /**
@@ -350,30 +612,135 @@ public class WordExportService {
         }
     }
 
-    /** 大连海洋大学版式：页边距 + 页眉/页脚距离；文档末节默认正文阿拉伯页码从 1 起 */
-    private void applyDalianOceanPageSetup(XWPFDocument doc) {
+    /** 页边距 + 页眉/页脚距离；文档末节默认正文阿拉伯页码从 1 起 */
+    private void applyPageSetup(XWPFDocument doc) {
+        Boolean enabled = fmt().getExport().getApplyPageSetup();
+        if (enabled != null && !enabled) {
+            return;
+        }
         CTSectPr sectPr = doc.getDocument().getBody().isSetSectPr()
             ? doc.getDocument().getBody().getSectPr()
             : doc.getDocument().getBody().addNewSectPr();
         applyPageGeometry(sectPr);
         // body/sectPr 对应最后一节（第一章起正文）
-        applyPageNumberFormat(sectPr, PageNumberMode.ARABIC);
+        applyPageNumberFormat(sectPr, resolveBodyPageNumberMode());
     }
 
     /**
-     * 页眉清空；为末节（正文）挂载阿拉伯页码页脚。
+     * 写入页眉（奇/偶）与正文页脚页码。
      * 目录节页脚在写入目录分节时挂载；摘要等前置节不挂页码。
      */
     private void applyHeaderAndFooter(XWPFDocument doc) {
         resetHeaderFooters(doc);
-        XWPFFooter bodyFooter = createPageNumberFooter(doc, true);
-        CTSectPr bodySectPr = doc.getDocument().getBody().isSetSectPr()
-            ? doc.getDocument().getBody().getSectPr()
-            : doc.getDocument().getBody().addNewSectPr();
-        attachFooter(doc, bodySectPr, bodyFooter);
+        applyConfiguredHeaders(doc);
+        if (footerEnabled()) {
+            XWPFFooter bodyFooter = createPageNumberFooter(doc, resolveBodyPageNumberMode() == PageNumberMode.ARABIC);
+            CTSectPr bodySectPr = doc.getDocument().getBody().isSetSectPr()
+                ? doc.getDocument().getBody().getSectPr()
+                : doc.getDocument().getBody().addNewSectPr();
+            attachFooter(doc, bodySectPr, bodyFooter);
+            attachConfiguredHeadersToSect(doc, bodySectPr);
+        }
+        else {
+            CTSectPr bodySectPr = doc.getDocument().getBody().isSetSectPr()
+                ? doc.getDocument().getBody().getSectPr()
+                : doc.getDocument().getBody().addNewSectPr();
+            attachFooter(doc, bodySectPr, createEmptyFooter(doc));
+            attachConfiguredHeadersToSect(doc, bodySectPr);
+        }
     }
 
-    /** 创建小五号宋体、居中的 PAGE 域页脚 */
+    private void applyConfiguredHeaders(XWPFDocument doc) {
+        PaperFormatConfig.HeaderFooter hf = fmt().nestedHeaderFooter();
+        String odd = hf == null ? null : StringUtils.trim(hf.getOddHeader());
+        String even = hf == null ? null : StringUtils.trim(hf.getEvenHeader());
+        if (StringUtils.isBlank(odd) && StringUtils.isBlank(even)) {
+            return;
+        }
+        if (StringUtils.isNotBlank(odd) && StringUtils.isNotBlank(even) && !odd.equals(even)) {
+            createTextHeader(doc, HeaderFooterType.DEFAULT, odd);
+            createTextHeader(doc, HeaderFooterType.EVEN, even);
+        }
+        else {
+            String text = StringUtils.isNotBlank(odd) ? odd : even;
+            createTextHeader(doc, HeaderFooterType.DEFAULT, text);
+        }
+    }
+
+    private XWPFHeader createTextHeader(XWPFDocument doc, HeaderFooterType type, String text) {
+        if (StringUtils.isBlank(text)) {
+            return null;
+        }
+        XWPFHeader header = doc.createHeader(type);
+        header.clearHeaderFooter();
+        XWPFParagraph para = header.createParagraph();
+        para.setAlignment(ParagraphAlignment.CENTER);
+        para.setSpacingBefore(0);
+        para.setSpacingAfter(0);
+        XWPFRun run = para.createRun();
+        applyFont(run, fontFooter(), fontSizeFooter());
+        run.setText(text);
+        return header;
+    }
+
+    private void attachConfiguredHeadersToSect(XWPFDocument doc, CTSectPr sectPr) {
+        if (sectPr == null) {
+            return;
+        }
+        // createHeader 通常已写入 body sectPr；各分节再补齐引用
+        for (XWPFHeader header : doc.getHeaderList()) {
+            String relId = doc.getRelationId(header);
+            if (StringUtils.isBlank(relId)) {
+                continue;
+            }
+            STHdrFtr.Enum type = headerTypeOf(doc, header);
+            boolean exists = false;
+            for (int i = 0; i < sectPr.sizeOfHeaderReferenceArray(); i++) {
+                CTHdrFtrRef existing = sectPr.getHeaderReferenceArray(i);
+                if (existing.getType() == type || relId.equals(existing.getId())) {
+                    exists = true;
+                    break;
+                }
+            }
+            if (exists) {
+                continue;
+            }
+            CTHdrFtrRef ref = sectPr.addNewHeaderReference();
+            ref.setType(type);
+            ref.setId(relId);
+        }
+    }
+
+    private STHdrFtr.Enum headerTypeOf(XWPFDocument doc, XWPFHeader header) {
+        try {
+            var policy = doc.getHeaderFooterPolicy();
+            if (policy != null && policy.getEvenPageHeader() == header) {
+                return STHdrFtr.EVEN;
+            }
+            if (policy != null && policy.getFirstPageHeader() == header) {
+                return STHdrFtr.FIRST;
+            }
+        } catch (Exception ignored) {
+            // ignore
+        }
+        String packagePart = "";
+        try {
+            if (header.getPackagePart() != null && header.getPackagePart().getPartName() != null) {
+                packagePart = header.getPackagePart().getPartName().getName().toLowerCase();
+            }
+        } catch (Exception ignored) {
+            // ignore
+        }
+        if (packagePart.contains("even")) {
+            return STHdrFtr.EVEN;
+        }
+        if (packagePart.contains("first")) {
+            return STHdrFtr.FIRST;
+        }
+        return STHdrFtr.DEFAULT;
+    }
+
+    /** 创建页码页脚（支持 - n - 样式） */
     private XWPFFooter createPageNumberFooter(XWPFDocument doc, boolean arabicPlaceholder) {
         XWPFFooter footer = doc.createFooter(HeaderFooterType.DEFAULT);
         footer.clearHeaderFooter();
@@ -381,7 +748,7 @@ public class WordExportService {
         para.setAlignment(ParagraphAlignment.CENTER);
         para.setSpacingBefore(0);
         para.setSpacingAfter(0);
-        appendPageNumberField(para, arabicPlaceholder);
+        appendPageNumberField(para, arabicPlaceholder, footerUsesDash());
         return footer;
     }
 
@@ -393,17 +760,26 @@ public class WordExportService {
         return footer;
     }
 
-    /** 导出末尾再次锁定正文节：阿拉伯数字从 1、小五宋体页脚（避免中途 createFooter 改写末节引用） */
+    /** 导出末尾再次锁定正文节：阿拉伯数字从 1、页脚（避免中途 createFooter 改写末节引用） */
     private void ensureBodySectionPageSetup(XWPFDocument doc) {
         CTSectPr bodySectPr = doc.getDocument().getBody().isSetSectPr()
             ? doc.getDocument().getBody().getSectPr()
             : doc.getDocument().getBody().addNewSectPr();
-        applyPageGeometry(bodySectPr);
-        applyPageNumberFormat(bodySectPr, PageNumberMode.ARABIC);
+        Boolean enabled = fmt().getExport().getApplyPageSetup();
+        if (enabled == null || enabled) {
+            applyPageGeometry(bodySectPr);
+        }
+        applyPageNumberFormat(bodySectPr, resolveBodyPageNumberMode());
         if (bodySectPr.isSetTitlePg()) {
             bodySectPr.unsetTitlePg();
         }
-        attachFooter(doc, bodySectPr, createPageNumberFooter(doc, true));
+        if (footerEnabled()) {
+            attachFooter(doc, bodySectPr, createPageNumberFooter(doc, resolveBodyPageNumberMode() == PageNumberMode.ARABIC));
+        }
+        else {
+            attachFooter(doc, bodySectPr, createEmptyFooter(doc));
+        }
+        attachConfiguredHeadersToSect(doc, bodySectPr);
     }
 
     private void attachFooter(XWPFDocument doc, CTSectPr sectPr, XWPFFooter footer) {
@@ -426,9 +802,14 @@ public class WordExportService {
         ref.setId(relId);
     }
 
-    private void appendPageNumberField(XWPFParagraph paragraph, boolean arabic) {
+    private void appendPageNumberField(XWPFParagraph paragraph, boolean arabic, boolean dash) {
+        if (dash) {
+            XWPFRun prefix = paragraph.createRun();
+            applyFont(prefix, fontFooter(), fontSizeFooter());
+            prefix.setText("- ");
+        }
         XWPFRun run = paragraph.createRun();
-        applyFont(run, FONT_BODY, FONT_SIZE_FOOTER);
+        applyFont(run, fontFooter(), fontSizeFooter());
         CTR ctr = run.getCTR();
 
         CTFldChar begin = ctr.addNewFldChar();
@@ -445,6 +826,12 @@ public class WordExportService {
 
         CTFldChar end = ctr.addNewFldChar();
         end.setFldCharType(STFldCharType.END);
+
+        if (dash) {
+            XWPFRun suffix = paragraph.createRun();
+            applyFont(suffix, fontFooter(), fontSizeFooter());
+            suffix.setText(" -");
+        }
     }
 
     private void applyPageGeometry(CTSectPr sectPr) {
@@ -452,10 +839,10 @@ public class WordExportService {
         pageSz.setW(BigInteger.valueOf(A4_WIDTH));
         pageSz.setH(BigInteger.valueOf(A4_HEIGHT));
         CTPageMar mar = sectPr.isSetPgMar() ? sectPr.getPgMar() : sectPr.addNewPgMar();
-        mar.setLeft(BigInteger.valueOf(MARGIN_LEFT));
-        mar.setRight(BigInteger.valueOf(MARGIN_RIGHT));
-        mar.setTop(BigInteger.valueOf(MARGIN_TOP));
-        mar.setBottom(BigInteger.valueOf(MARGIN_BOTTOM));
+        mar.setLeft(BigInteger.valueOf(marginLeftTwips()));
+        mar.setRight(BigInteger.valueOf(marginRightTwips()));
+        mar.setTop(BigInteger.valueOf(marginTopTwips()));
+        mar.setBottom(BigInteger.valueOf(marginBottomTwips()));
         mar.setHeader(BigInteger.valueOf(HEADER_DISTANCE));
         mar.setFooter(BigInteger.valueOf(FOOTER_DISTANCE));
     }
@@ -481,22 +868,33 @@ public class WordExportService {
      * 仅作用于本次导出的 docx 副本，不写回磁盘模板。
      */
     private void patchTemplateStyles(XWPFDocument doc) {
+        Boolean patch = fmt().getExport().getPatchTemplateStyles();
+        if (patch != null && !patch) {
+            return;
+        }
         PaperTemplateStyleMapping mapping = currentTemplateStyles();
         if (mapping == null) {
             return;
         }
-        patchStyleFont(doc, mapping.getNormal(), FONT_BODY, FONT_SIZE_BODY, false);
+        PaperFormatConfig.Heading heading = fmt().getHeading();
+        patchStyleFont(doc, mapping.getNormal(), fontBody(), fontSizeBody(), false);
         patchStyleFirstLineIndent(doc, mapping.getNormal());
-        patchStyleFont(doc, mapping.getReference(), FONT_BODY, FONT_SIZE_BODY, false);
+        patchStyleFont(doc, mapping.getReference(), fontReference(), fontSizeReference(), false);
         // 参考文献禁止两端/分散对齐，否则短行会被 Word 拉大字距
         patchStyleAlignment(doc, mapping.getReference(), STJc.LEFT);
         // 模板「参考文献」样式自带自动编号 lvlText=[%1]，与正文手写 [n] 叠成 [1][1]
         patchStyleClearNumbering(doc, mapping.getReference());
         patchStyleClearIndent(doc, mapping.getReference());
-        // 规范：标题黑体不加粗
-        patchStyleFont(doc, mapping.getHeading1(), FONT_HEADING, FONT_SIZE_H1, false);
-        patchStyleFont(doc, mapping.getHeading2(), FONT_HEADING, FONT_SIZE_H2, false);
-        patchStyleFont(doc, mapping.getHeading3(), FONT_HEADING, FONT_SIZE_H3, false);
+        patchStyleFont(doc, mapping.getHeading1(), fontHeadingAt(1), fontSizeH1(),
+            Boolean.TRUE.equals(heading.getH1Bold()));
+        patchStyleFont(doc, mapping.getHeading2(), fontHeadingAt(2), fontSizeH2(),
+            Boolean.TRUE.equals(heading.getH2Bold()));
+        patchStyleFont(doc, mapping.getHeading3(), fontHeadingAt(3), fontSizeH3(),
+            Boolean.TRUE.equals(heading.getH3Bold()));
+        // 标题样式常基于正文，会继承首行缩进；强制顶格
+        patchStyleClearIndent(doc, mapping.getHeading1());
+        patchStyleClearIndent(doc, mapping.getHeading2());
+        patchStyleClearIndent(doc, mapping.getHeading3());
         patchStyleTocTab(doc, mapping.getToc1());
         patchStyleTocTab(doc, mapping.getToc2());
         patchStyleTocTab(doc, mapping.getToc3());
@@ -525,7 +923,7 @@ public class WordExportService {
         CTTabStop tab = tabs.addNewTab();
         tab.setVal(STTabJc.RIGHT);
         tab.setLeader(STTabTlc.DOT);
-        tab.setPos(BigInteger.valueOf(TOC_TAB_POS));
+        tab.setPos(BigInteger.valueOf(tocTabPos()));
     }
 
     private void patchStyleFont(XWPFDocument doc, String styleId, String family, double sizePt, boolean bold) {
@@ -597,7 +995,7 @@ public class WordExportService {
         }
     }
 
-    /** 清除样式缩进，保证参考文献序号左顶格 */
+    /** 清除样式缩进，保证参考文献序号/各级标题左顶格 */
     private void patchStyleClearIndent(XWPFDocument doc, String styleId) {
         if (StringUtils.isBlank(styleId)) {
             return;
@@ -615,8 +1013,15 @@ public class WordExportService {
             : style.getCTStyle().addNewPPr();
         CTInd ind = pPr.isSetInd() ? pPr.getInd() : pPr.addNewInd();
         ind.setLeft(BigInteger.ZERO);
+        ind.setRight(BigInteger.ZERO);
         ind.setFirstLine(BigInteger.ZERO);
         ind.setFirstLineChars(BigInteger.ZERO);
+        if (ind.isSetLeftChars()) {
+            ind.unsetLeftChars();
+        }
+        if (ind.isSetRightChars()) {
+            ind.unsetRightChars();
+        }
         if (ind.isSetHanging()) {
             ind.unsetHanging();
         }
@@ -642,8 +1047,8 @@ public class WordExportService {
             ? style.getCTStyle().getPPr()
             : style.getCTStyle().addNewPPr();
         CTInd ind = pPr.isSetInd() ? pPr.getInd() : pPr.addNewInd();
-        ind.setFirstLineChars(BigInteger.valueOf(BODY_FIRST_LINE_CHARS));
-        ind.setFirstLine(BigInteger.valueOf(BODY_FIRST_LINE_TWIPS));
+        ind.setFirstLineChars(BigInteger.valueOf(bodyFirstLineCharsHundredths()));
+        ind.setFirstLine(BigInteger.valueOf(bodyFirstLineTwips()));
     }
 
     private void applyBodyFirstLineIndent(XWPFParagraph paragraph) {
@@ -651,16 +1056,23 @@ public class WordExportService {
             ? paragraph.getCTP().getPPr()
             : paragraph.getCTP().addNewPPr();
         CTInd ind = pPr.isSetInd() ? pPr.getInd() : pPr.addNewInd();
-        ind.setFirstLineChars(BigInteger.valueOf(BODY_FIRST_LINE_CHARS));
-        ind.setFirstLine(BigInteger.valueOf(BODY_FIRST_LINE_TWIPS));
+        ind.setFirstLineChars(BigInteger.valueOf(bodyFirstLineCharsHundredths()));
+        ind.setFirstLine(BigInteger.valueOf(bodyFirstLineTwips()));
     }
 
     private void applyBodyParagraphLayout(XWPFParagraph paragraph) {
-        // 正文：五号宋体 + 固定行距 18 磅，段前段后 0
-        paragraph.setSpacingBetween(BODY_LINE_SPACING_TWIPS / 20.0, LineSpacingRule.EXACT);
+        PaperFormatConfig.Paragraph para = fmt().getParagraph();
+        String rule = para.getLineSpacingRule();
+        if (rule != null && "auto".equalsIgnoreCase(rule.trim())) {
+            double multiple = firstNonNull(para.getLineSpacingMultiple(), 1.5);
+            paragraph.setSpacingBetween(multiple, LineSpacingRule.AUTO);
+        } else {
+            double pt = firstNonNull(para.getLineSpacingPt(), BODY_LINE_SPACING_PT);
+            paragraph.setSpacingBetween(pt, LineSpacingRule.EXACT);
+        }
         paragraph.setSpacingBefore(0);
         paragraph.setSpacingAfter(0);
-        paragraph.setAlignment(ParagraphAlignment.BOTH);
+        paragraph.setAlignment(resolveAlign(para.getBodyAlign(), ParagraphAlignment.BOTH));
         applyBodyFirstLineIndent(paragraph);
     }
 
@@ -675,16 +1087,12 @@ public class WordExportService {
 
     // ---------------- 页面 / 标题 ----------------
 
-    private void applyPageSetup(XWPFDocument doc) {
-        applyDalianOceanPageSetup(doc);
-    }
-
     /** 注册 Heading1-3 样式（含 outlineLvl），使 Word 左侧导航与自动目录可识别章节结构 */
     private void ensureDocumentStyles(XWPFDocument doc) {
         XWPFStyles styles = doc.createStyles();
-        addHeadingStyle(styles, STYLE_HEADING1, "heading 1", 0, FONT_SIZE_H1);
-        addHeadingStyle(styles, STYLE_HEADING2, "heading 2", 1, FONT_SIZE_H2);
-        addHeadingStyle(styles, STYLE_HEADING3, "heading 3", 2, FONT_SIZE_H3);
+        addHeadingStyle(styles, STYLE_HEADING1, "heading 1", 0, fontSizeH1());
+        addHeadingStyle(styles, STYLE_HEADING2, "heading 2", 1, fontSizeH2());
+        addHeadingStyle(styles, STYLE_HEADING3, "heading 3", 2, fontSizeH3());
         addSectionTitleStyle(styles);
     }
 
@@ -703,8 +1111,7 @@ public class WordExportService {
         pPr.addNewOutlineLvl().setVal(BigInteger.valueOf(outlineLevel));
 
         CTRPr rPr = ctStyle.addNewRPr();
-        // 规范：标题不加粗
-        applyRunFontProperties(rPr, FONT_HEADING, fontSize);
+        applyRunFontProperties(rPr, fontHeading(), fontSize);
 
         XWPFStyle style = new XWPFStyle(ctStyle);
         style.setType(STStyleType.PARAGRAPH);
@@ -720,7 +1127,7 @@ public class WordExportService {
         ctStyle.setName(styleName);
 
         CTRPr rPr = ctStyle.addNewRPr();
-        applyRunFontProperties(rPr, FONT_HEADING, FONT_SIZE_H1);
+        applyRunFontProperties(rPr, fontHeading(), fontSizeH1());
 
         XWPFStyle style = new XWPFStyle(ctStyle);
         style.setType(STStyleType.PARAGRAPH);
@@ -738,8 +1145,8 @@ public class WordExportService {
             p.setStyle(templateStyles.getHeading1());
         }
         XWPFRun run = p.createRun();
-        run.setBold(true);
-        applyFont(run, FONT_HEADING, FONT_SIZE_TITLE_XIAO_ER);
+        run.setBold(!Boolean.FALSE.equals(fmt().getHeading().getTitleBold()));
+        applyFont(run, fontHeading(), fontSizeTitle());
         run.setText(title.trim());
     }
 
@@ -987,9 +1394,9 @@ public class WordExportService {
         XWPFRun run = p.createRun();
         run.setBold(true);
         if (chinese) {
-            applyFont(run, FONT_HEADING, FONT_SIZE_BODY);
+            applyFont(run, fontAbstract(), fontSizeAbstractLabel());
         } else {
-            applyFont(run, FONT_TABLE, FONT_SIZE_BODY);
+            applyFont(run, fontTableAscii(), fontSizeAbstractLabel());
         }
         run.setText(chinese ? label : "Abstract:");
     }
@@ -1002,7 +1409,7 @@ public class WordExportService {
         p.setSpacingBetween(1.5, LineSpacingRule.AUTO);
         XWPFRun run = p.createRun();
         run.setBold(true);
-        applyFont(run, FONT_TABLE, FONT_SIZE_TITLE_XIAO_ER);
+        applyFont(run, fontTableAscii(), fontSizeTitle());
         run.setText(title);
     }
 
@@ -1067,7 +1474,7 @@ public class WordExportService {
         XWPFParagraph p = doc.createParagraph();
         applyBodyParagraphLayout(p);
         XWPFRun run = p.createRun();
-        applyFont(run, chinese ? FONT_BODY : FONT_TABLE, FONT_SIZE_BODY);
+        applyFont(run, chinese ? fontAbstract() : fontTableAscii(), fontSizeAbstractBody());
         run.setText(text);
     }
 
@@ -1079,7 +1486,7 @@ public class WordExportService {
         if (sep < 0) {
             XWPFRun run = p.createRun();
             run.setBold(true);
-            applyFont(run, chinese ? FONT_BODY : FONT_TABLE, FONT_SIZE_BODY);
+            applyFont(run, chinese ? fontKeyword() : fontTableAscii(), fontSizeKeyword());
             run.setText(line);
             return;
         }
@@ -1087,10 +1494,10 @@ public class WordExportService {
         String rest = line.substring(sep);
         XWPFRun labelRun = p.createRun();
         labelRun.setBold(true);
-        applyFont(labelRun, chinese ? FONT_BODY : FONT_TABLE, FONT_SIZE_BODY);
+        applyFont(labelRun, chinese ? fontKeyword() : fontTableAscii(), fontSizeKeyword());
         labelRun.setText(label);
         XWPFRun restRun = p.createRun();
-        applyFont(restRun, chinese ? FONT_BODY : FONT_TABLE, FONT_SIZE_BODY);
+        applyFont(restRun, chinese ? fontKeyword() : fontTableAscii(), fontSizeKeyword());
         restRun.setText(rest);
     }
 
@@ -1118,6 +1525,8 @@ public class WordExportService {
         Map<String, Integer> headingPages = layoutEstimator.estimate(toc, session);
 
         boolean tocPageInserted = false;
+        // 目录分节后第一章已在新页；此后每个大章节强制换页，避免与上一章同页
+        boolean needMajorChapterPageBreak = false;
         for (TocNode node : toc) {
             if (isTocPageNode(node)) {
                 continue;
@@ -1126,10 +1535,16 @@ public class WordExportService {
                 writeTableOfContentsPage(doc, toc, headingPages);
                 tocPageInserted = true;
             }
+            if (needMajorChapterPageBreak && !isAbstractNode(node)) {
+                addPageBreak(doc);
+            }
             writeNode(doc, node, session);
             if (!tocPageInserted && isAbstractNode(node)) {
                 writeTableOfContentsPage(doc, toc, headingPages);
                 tocPageInserted = true;
+            }
+            if (!isAbstractNode(node)) {
+                needMajorChapterPageBreak = true;
             }
         }
     }
@@ -1143,20 +1558,28 @@ public class WordExportService {
 
         if (isAbstractNode(node)) {
             renderAbstractChapter(doc, session.getTitle(), content);
-        } else {
-            if (isReferenceNode(node)) {
-                addSectionTitle(doc, title);
-                // 与预览一致：优先用参考文献章节正文；无正文时再回退结构化列表
-                if (StringUtils.isNotBlank(content) && !isReferencePlaceholder(content)) {
-                    renderReferenceContent(doc, content);
-                } else if (session.getReferences() != null && !session.getReferences().isEmpty()) {
-                    renderReferences(doc, session.getReferences());
-                }
-            } else {
-                addHeading(doc, title, level);
+        } else if (isReferenceNode(node)) {
+            addSectionTitle(doc, title);
+            // 与预览一致：优先用参考文献章节正文；无正文时再回退结构化列表
+            if (StringUtils.isNotBlank(content) && !isReferencePlaceholder(content)) {
+                renderReferenceContent(doc, content);
+            } else if (session.getReferences() != null && !session.getReferences().isEmpty()) {
+                renderReferences(doc, session.getReferences());
+            }
+        } else if (isAcknowledgmentNode(node)) {
+            addHeading(doc, title, level);
+            acknowledgmentBody.set(Boolean.TRUE);
+            try {
                 if (StringUtils.isNotBlank(content)) {
                     renderContent(doc, content);
                 }
+            } finally {
+                acknowledgmentBody.remove();
+            }
+        } else {
+            addHeading(doc, title, level);
+            if (StringUtils.isNotBlank(content)) {
+                renderContent(doc, content);
             }
         }
 
@@ -1171,6 +1594,12 @@ public class WordExportService {
         String id = node.getId() == null ? "" : node.getId().toLowerCase();
         String title = node.getTitle() == null ? "" : node.getTitle();
         return id.contains("reference") || title.contains("参考文献");
+    }
+
+    private boolean isAcknowledgmentNode(TocNode node) {
+        String id = node.getId() == null ? "" : node.getId().toLowerCase();
+        String title = node.getTitle() == null ? "" : node.getTitle();
+        return id.contains("ack") || title.contains("致谢") || title.contains("鸣谢");
     }
 
     /** 占位提示不算有效参考文献正文 */
@@ -1210,7 +1639,7 @@ public class WordExportService {
         titlePara.setAlignment(ParagraphAlignment.CENTER);
         titlePara.setSpacingAfter(200);
         XWPFRun titleRun = titlePara.createRun();
-        applyFont(titleRun, FONT_HEADING, FONT_SIZE_H1);
+        applyFont(titleRun, fontHeading(), fontSizeH1());
         titleRun.setBold(false);
         titleRun.setText("目录");
 
@@ -1239,11 +1668,12 @@ public class WordExportService {
         }
         applyPageGeometry(sectPr);
         applyPageNumberFormat(sectPr, mode);
-        if (withPageFooter) {
+        if (withPageFooter && footerEnabled()) {
             attachFooter(doc, sectPr, createPageNumberFooter(doc, mode == PageNumberMode.ARABIC));
         } else {
             attachFooter(doc, sectPr, createEmptyFooter(doc));
         }
+        attachConfiguredHeadersToSect(doc, sectPr);
     }
 
     private void appendStaticTocEntry(XWPFDocument doc, TocNode node, Map<String, Integer> headingPages) {
@@ -1287,7 +1717,7 @@ public class WordExportService {
 
         XWPFRun run = p.createRun();
         if (templateStyles == null) {
-            applyFont(run, FONT_BODY, FONT_SIZE_BODY);
+            applyFont(run, fontBody(), fontSizeBody());
         }
         run.setText(title + "\t" + pageNumber);
     }
@@ -1302,7 +1732,7 @@ public class WordExportService {
         CTTabStop tab = tabs.addNewTab();
         tab.setVal(STTabJc.RIGHT);
         tab.setLeader(STTabTlc.DOT);
-        tab.setPos(BigInteger.valueOf(TOC_TAB_POS));
+        tab.setPos(BigInteger.valueOf(tocTabPos()));
     }
 
     private void addPageBreak(XWPFDocument doc) {
@@ -1418,13 +1848,21 @@ public class WordExportService {
         }
         applyReferenceParagraphLayout(p);
         XWPFRun run = p.createRun();
-        applyFont(run, FONT_BODY, FONT_SIZE_BODY);
+        applyFont(run, fontReference(), fontSizeReference());
         run.setText(text);
     }
 
     private void applyReferenceParagraphLayout(XWPFParagraph paragraph) {
         paragraph.setAlignment(ParagraphAlignment.LEFT);
-        paragraph.setSpacingBetween(BODY_LINE_SPACING_TWIPS / 20.0, LineSpacingRule.EXACT);
+        PaperFormatConfig.Paragraph para = fmt().getParagraph();
+        String rule = para.getLineSpacingRule();
+        if (rule != null && "auto".equalsIgnoreCase(rule.trim())) {
+            double multiple = firstNonNull(para.getLineSpacingMultiple(), 1.5);
+            paragraph.setSpacingBetween(multiple, LineSpacingRule.AUTO);
+        } else {
+            double pt = firstNonNull(para.getLineSpacingPt(), BODY_LINE_SPACING_PT);
+            paragraph.setSpacingBetween(pt, LineSpacingRule.EXACT);
+        }
         paragraph.setSpacingBefore(0);
         paragraph.setSpacingAfter(0);
         CTPPr pPr = paragraph.getCTP().isSetPPr()
@@ -1564,54 +2002,65 @@ public class WordExportService {
     // ---------------- 段落 / 标题 / 表格 ----------------
 
     private void addHeading(XWPFDocument doc, String text, int level) {
+        int safeLevel = Math.max(1, Math.min(level, 5));
         PaperTemplateStyleMapping templateStyles = currentTemplateStyles();
+        PaperFormatConfig.Heading heading = fmt().getHeading();
         XWPFParagraph p = doc.createParagraph();
         if (templateStyles != null) {
-            p.setStyle(templateStyles.headingStyleId(level));
+            p.setStyle(templateStyles.headingStyleId(safeLevel));
         } else {
-            String style = switch (level) {
+            String style = switch (safeLevel) {
                 case 1 -> STYLE_HEADING1;
                 case 2 -> STYLE_HEADING2;
                 default -> STYLE_HEADING3;
             };
             p.setStyle(style);
-            applyOutlineLevel(p, Math.min(level - 1, 2));
+            applyOutlineLevel(p, Math.min(safeLevel - 1, 4));
         }
-        // 一级居中；二/三级顶格；段前段后约 1 行；不加粗
-        if (level <= 1) {
-            p.setAlignment(ParagraphAlignment.CENTER);
+        // 禁止继承正文首行缩进，标题必须顶格
+        clearParagraphIndent(p);
+        if (safeLevel <= 1) {
+            p.setAlignment(resolveAlign(heading.getH1Align(), ParagraphAlignment.CENTER));
+            p.setSpacingBefore(ptToTwips(firstNonNull(heading.getH1SpacingBeforePt(), HEADING_SPACING_PT)));
+            p.setSpacingAfter(ptToTwips(firstNonNull(heading.getH1SpacingAfterPt(), HEADING_SPACING_PT)));
+        } else if (safeLevel == 2) {
+            p.setAlignment(resolveAlign(heading.getH2Align(), ParagraphAlignment.LEFT));
+            p.setSpacingBefore(ptToTwips(firstNonNull(heading.getH2SpacingBeforePt(), HEADING_SPACING_PT)));
+            p.setSpacingAfter(ptToTwips(firstNonNull(heading.getH2SpacingAfterPt(), HEADING_SPACING_PT)));
         } else {
-            p.setAlignment(ParagraphAlignment.LEFT);
+            p.setAlignment(resolveAlign(heading.getH3Align(), ParagraphAlignment.LEFT));
+            p.setSpacingBefore(ptToTwips(firstNonNull(heading.getH3SpacingBeforePt(), HEADING_SPACING_PT)));
+            p.setSpacingAfter(ptToTwips(firstNonNull(heading.getH3SpacingAfterPt(), HEADING_SPACING_PT)));
         }
-        p.setSpacingBefore(HEADING_SPACING_LINE);
-        p.setSpacingAfter(HEADING_SPACING_LINE);
 
-        double size = switch (level) {
-            case 1 -> FONT_SIZE_H1;
-            case 2 -> FONT_SIZE_H2;
-            default -> FONT_SIZE_H3;
+        boolean bold = switch (safeLevel) {
+            case 1 -> Boolean.TRUE.equals(heading.getH1Bold());
+            case 2 -> Boolean.TRUE.equals(heading.getH2Bold());
+            default -> Boolean.TRUE.equals(heading.getH3Bold());
         };
         XWPFRun run = p.createRun();
-        run.setBold(false);
-        applyFont(run, FONT_HEADING, size);
+        run.setBold(bold);
+        applyFont(run, fontHeadingAt(safeLevel), fontSizeHeadingAt(safeLevel));
         run.setText(text);
     }
 
     /** 摘要、参考文献等：视觉同一级标题，但不写入 Word 目录大纲 */
     private void addSectionTitle(XWPFDocument doc, String text) {
         PaperTemplateStyleMapping templateStyles = currentTemplateStyles();
+        PaperFormatConfig.Heading heading = fmt().getHeading();
         XWPFParagraph p = doc.createParagraph();
         if (templateStyles != null) {
             p.setStyle(templateStyles.getHeading1());
         } else {
             p.setStyle(STYLE_SECTION_TITLE);
         }
-        p.setAlignment(ParagraphAlignment.CENTER);
-        p.setSpacingBefore(HEADING_SPACING_LINE);
-        p.setSpacingAfter(HEADING_SPACING_LINE);
+        clearParagraphIndent(p);
+        p.setAlignment(resolveAlign(heading.getH1Align(), ParagraphAlignment.CENTER));
+        p.setSpacingBefore(ptToTwips(firstNonNull(heading.getH1SpacingBeforePt(), HEADING_SPACING_PT)));
+        p.setSpacingAfter(ptToTwips(firstNonNull(heading.getH1SpacingAfterPt(), HEADING_SPACING_PT)));
         XWPFRun run = p.createRun();
-        run.setBold(false);
-        applyFont(run, FONT_HEADING, FONT_SIZE_H1);
+        run.setBold(Boolean.TRUE.equals(heading.getH1Bold()));
+        applyFont(run, fontHeadingAt(1), fontSizeH1());
         run.setText(text);
     }
 
@@ -1661,12 +2110,14 @@ public class WordExportService {
 
     private void addRun(XWPFParagraph p, String text, boolean superscript, PaperTemplateStyleMapping templateStyles) {
         XWPFRun run = p.createRun();
-        // 文献角标：右上标，小四号 Times New Roman（校方规范）
+        // 文献角标：右上标，小四号西文（默认 Times New Roman）
         if (superscript) {
-            applyFont(run, FONT_TABLE, FONT_SIZE_H2);
+            applyFont(run, fontTableAscii(), fontSizeH2());
             run.setVerticalAlignment("superscript");
+        } else if (Boolean.TRUE.equals(acknowledgmentBody.get())) {
+            applyFont(run, fontAcknowledgment(), fontSizeAcknowledgment());
         } else {
-            applyFont(run, FONT_BODY, FONT_SIZE_BODY);
+            applyFont(run, fontBody(), fontSizeBody());
         }
         run.setText(text);
     }
@@ -1810,11 +2261,11 @@ public class WordExportService {
         double widthPt = px[0] * 72.0 / 96.0;
         double heightPt = px[1] * 72.0 / 96.0;
         if (widthPt <= 0 || heightPt <= 0) {
-            widthPt = CONTENT_MAX_WIDTH_PT;
-            heightPt = CONTENT_MAX_WIDTH_PT * 0.65;
+            widthPt = contentMaxWidthPt();
+            heightPt = contentMaxWidthPt() * 0.65;
         }
         double scale = Math.min(
-            CONTENT_MAX_WIDTH_PT / widthPt,
+            contentMaxWidthPt() / widthPt,
             CONTENT_MAX_HEIGHT_PT / heightPt
         );
         widthPt = widthPt * scale;
@@ -1939,14 +2390,14 @@ public class WordExportService {
         p.setSpacingAfter(80);
         XWPFRun run = p.createRun();
         // 图、表标题：小五号黑体
-        applyFont(run, FONT_HEADING, FONT_SIZE_CAPTION);
+        applyFont(run, fontHeading(), fontSizeCaption());
         run.setText(text);
     }
 
     private void addCodeLine(XWPFDocument doc, String line) {
         XWPFParagraph p = doc.createParagraph();
         XWPFRun run = p.createRun();
-        applyFont(run, FONT_CODE, 10);
+        applyFont(run, fontCode(), 10);
         run.setText(line);
     }
 
@@ -1985,7 +2436,7 @@ public class WordExportService {
     /** 数据库六列表用固定比例；其余按表头/内容估算，并保证表头汉字不纵向拆字 */
     private int[] resolveTableColumnWidths(List<String[]> rows, int cols, boolean thesisGrid) {
         if (thesisGrid && cols == DB_TABLE_COL_PCT.length) {
-            return percentToTwips(DB_TABLE_COL_PCT, TABLE_WIDTH_TWIPS);
+            return percentToTwips(DB_TABLE_COL_PCT, tableWidthTwips());
         }
         int[] weights = new int[cols];
         for (int c = 0; c < cols; c++) {
@@ -1998,7 +2449,7 @@ public class WordExportService {
             // 表头至少按汉字宽度留空，防止「长度」「主键」被挤成一字一换行
             weights[c] = Math.max(max, 4);
         }
-        return weightToTwips(weights, TABLE_WIDTH_TWIPS);
+        return weightToTwips(weights, tableWidthTwips());
     }
 
     /** 粗估显示宽度：中文≈2、英文/数字≈1 */
@@ -2058,7 +2509,7 @@ public class WordExportService {
         CTTblPr tblPr = ctTbl.getTblPr() != null ? ctTbl.getTblPr() : ctTbl.addNewTblPr();
         CTTblWidth tblW = tblPr.isSetTblW() ? tblPr.getTblW() : tblPr.addNewTblW();
         tblW.setType(STTblWidth.DXA);
-        tblW.setW(BigInteger.valueOf(TABLE_WIDTH_TWIPS));
+        tblW.setW(BigInteger.valueOf(tableWidthTwips()));
 
         CTTblLayoutType layout = tblPr.isSetTblLayout() ? tblPr.getTblLayout() : tblPr.addNewTblLayout();
         layout.setType(STTblLayoutType.FIXED);
@@ -2253,7 +2704,7 @@ public class WordExportService {
 
         XWPFRun run = p.createRun();
         // 表内：中文宋体五号，英文/数字 Times New Roman 五号
-        applyFont(run, FONT_BODY, FONT_SIZE_TABLE);
+        applyFont(run, fontTableEastAsia(), fontSizeTable());
         run.setBold(false);
         run.setText(text == null ? "" : text);
     }
@@ -2400,9 +2851,35 @@ public class WordExportService {
             rPr.addNewNoProof();
         }
         CTFonts fonts = rPr.sizeOfRFontsArray() > 0 ? rPr.getRFontsArray(0) : rPr.addNewRFonts();
+        String ascii = resolveAsciiFont(family);
         fonts.setEastAsia(family);
-        fonts.setAscii(family.equals(FONT_BODY) ? FONT_TABLE : family);
-        fonts.setHAnsi(family.equals(FONT_BODY) ? FONT_TABLE : family);
-        fonts.setCs(family.equals(FONT_BODY) ? FONT_TABLE : family);
+        fonts.setAscii(ascii);
+        fonts.setHAnsi(ascii);
+        fonts.setCs(ascii);
+    }
+
+    /** 按东文字体族匹配有效配置中的西文配对；无法识别时原样使用 */
+    private String resolveAsciiFont(String eastAsiaFamily) {
+        if (eastAsiaFamily == null) {
+            return FONT_TABLE;
+        }
+        if (eastAsiaFamily.equals(fontBody()) || eastAsiaFamily.equals(FONT_BODY)) {
+            return fontBodyAscii();
+        }
+        if (eastAsiaFamily.equals(fontHeading()) || eastAsiaFamily.equals(FONT_HEADING)
+            || eastAsiaFamily.equals(fontHeadingAt(1))
+            || eastAsiaFamily.equals(fontHeadingAt(2))
+            || eastAsiaFamily.equals(fontHeadingAt(3))
+            || eastAsiaFamily.equals(fontHeadingAt(4))
+            || eastAsiaFamily.equals(fontHeadingAt(5))) {
+            return fontHeadingAscii();
+        }
+        if (eastAsiaFamily.equals(fontTableEastAsia())) {
+            return fontTableAscii();
+        }
+        if (eastAsiaFamily.equals(fontFooter())) {
+            return fontBodyAscii();
+        }
+        return eastAsiaFamily;
     }
 }

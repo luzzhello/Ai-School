@@ -4,6 +4,7 @@ import dev.langchain4j.model.chat.ChatModel;
 import dev.langchain4j.model.openai.OpenAiChatModel;
 import lombok.AccessLevel;
 import lombok.NoArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.ruoyi.common.chat.domain.vo.chat.ChatModelVo;
 import org.ruoyi.common.chat.service.chat.IChatModelService;
 import org.ruoyi.common.core.exception.ServiceException;
@@ -13,6 +14,7 @@ import java.time.Duration;
 /**
  * 画图类 AI 调用的统一模型构建与异常转换。
  */
+@Slf4j
 @NoArgsConstructor(access = AccessLevel.PRIVATE)
 public final class DrawChatModelSupport {
 
@@ -35,13 +37,15 @@ public final class DrawChatModelSupport {
     public static String chat(ChatModel model, String prompt) {
         try {
             return model.chat(prompt);
-        }
-        catch (Exception e) {
+        } catch (Exception e) {
+            log.error("AI系统访问异常", e);
             throw toServiceException(e);
         }
     }
 
-    /** 系统提示 + 用户提示（论文摘要等场景）。 */
+    /**
+     * 系统提示 + 用户提示（论文摘要等场景）。
+     */
     public static String chat(ChatModel model, String systemPrompt, String userPrompt) {
         String system = systemPrompt == null ? "" : systemPrompt.trim();
         String user = userPrompt == null ? "" : userPrompt.trim();
@@ -57,6 +61,6 @@ public final class DrawChatModelSupport {
     private static final String AI_BUSY_MESSAGE = "AI系统访问繁忙，稍后再试";
 
     private static ServiceException toServiceException(Throwable e) {
-        return new ServiceException(AI_BUSY_MESSAGE);
+        return new ServiceException(AI_BUSY_MESSAGE, e.getMessage());
     }
 }

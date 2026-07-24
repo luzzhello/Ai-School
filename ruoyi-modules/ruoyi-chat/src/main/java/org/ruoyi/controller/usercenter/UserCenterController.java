@@ -143,8 +143,19 @@ public class UserCenterController extends BaseController {
     }
 
     @GetMapping("/files/page")
-    public TableDataInfo<UcWorkFileVo> filesPage(WorkFileQueryRequest query, PageQuery pageQuery) {
+    public TableDataInfo<UcWorkFileVo> filesPage(
+        WorkFileQueryRequest query,
+        PageQuery pageQuery,
+        @RequestParam(required = false) String subType
+    ) {
         Long userId = requireLogin().getUserId();
+        if (query == null) {
+            query = new WorkFileQueryRequest();
+        }
+        // 显式接收 subType，避免个别环境下仅对象绑定时丢参
+        if ((query.getSubType() == null || query.getSubType().isBlank()) && subType != null && !subType.isBlank()) {
+            query.setSubType(subType.trim());
+        }
         return workFileService.page(userId, query, pageQuery);
     }
 

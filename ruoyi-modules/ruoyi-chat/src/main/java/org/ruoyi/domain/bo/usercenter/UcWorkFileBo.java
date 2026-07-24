@@ -13,4 +13,6 @@ public class UcWorkFileBo extends BaseEntity {
     private String fileName;
 
     private String fileType;
+
+    private String subType;
 }

@@ -39,6 +39,7 @@ final class PaperExportLayoutEstimator {
         }
 
         boolean tocPageInserted = false;
+        boolean needMajorChapterPageBreak = false;
         for (TocNode node : toc) {
             if (isTocPageNode(node)) {
                 continue;
@@ -47,10 +48,16 @@ final class PaperExportLayoutEstimator {
                 insertTocPage(toc);
                 tocPageInserted = true;
             }
+            if (needMajorChapterPageBreak && !isAbstractNode(node)) {
+                addPageBreak();
+            }
             simulateNode(node, session);
             if (!tocPageInserted && isAbstractNode(node)) {
                 insertTocPage(toc);
                 tocPageInserted = true;
+            }
+            if (!isAbstractNode(node)) {
+                needMajorChapterPageBreak = true;
             }
         }
         return headingPages;

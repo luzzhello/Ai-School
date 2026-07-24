@@ -43,18 +43,23 @@ final class AigcTextSegmenter {
     }
 
     private static List<String> splitParagraphs(String content) {
-        String[] parts = content.split("\\n\\s*\\n");
+        String[] parts = content.split("\\n\\s*\\n+");
         List<String> list = new ArrayList<>();
         for (String part : parts) {
             if (StringUtils.isNotBlank(part)) {
                 list.add(part.trim());
             }
         }
-        if (list.isEmpty() && StringUtils.isNotBlank(content)) {
-            for (String line : content.split("\\n")) {
+        // 空行切分无效时（整篇连成一段），按单行拆——Word/PDF/粘贴正文常见
+        if (list.size() <= 1 && StringUtils.isNotBlank(content)) {
+            List<String> byLine = new ArrayList<>();
+            for (String line : content.split("\\n+")) {
                 if (StringUtils.isNotBlank(line)) {
-                    list.add(line.trim());
+                    byLine.add(line.trim());
                 }
+            }
+            if (byLine.size() > 1) {
+                return byLine;
             }
         }
         return list;
@@ -73,5 +78,52 @@ final class AigcTextSegmenter {
 
     static int countWords(String text) {
         return text == null ? 0 : text.replaceAll("\\s+", "").length();
+    }
+
+    /**
+     * 将段落合并为适合检测的块：目标长度 [minChars, maxChars]，且不超过 maxChunks。
+     */
+    static List<String> mergeChunks(List<String> paragraphs, int minChars, int maxChars, int maxChunks) {
+        if (paragraphs == null || paragraphs.isEmpty()) {
+            return List.of();
+        }
+        List<String> merged = new ArrayList<>();
+        StringBuilder buf = new StringBuilder();
+        for (String paragraph : paragraphs) {
+            String text = StringUtils.trim(paragraph);
+            if (StringUtils.isBlank(text)) {
+                continue;
+            }
+            if (buf.isEmpty()) {
+                buf.append(text);
+                continue;
+            }
+            int nextLen = countWords(buf.toString()) + countWords(text);
+            if (countWords(buf.toString()) < minChars || nextLen <= maxChars) {
+                buf.append("\n\n").append(text);
+            }
+            else {
+                merged.add(buf.toString());
+                buf.setLength(0);
+                buf.append(text);
+            }
+        }
+        if (!buf.isEmpty()) {
+            merged.add(buf.toString());
+        }
+
+        while (merged.size() > maxChunks) {
+            List<String> compacted = new ArrayList<>();
+            for (int i = 0; i < merged.size(); i += 2) {
+                if (i + 1 < merged.size()) {
+                    compacted.add(merged.get(i) + "\n\n" + merged.get(i + 1));
+                }
+                else {
+                    compacted.add(merged.get(i));
+                }
+            }
+            merged = compacted;
+        }
+        return merged;
     }
 }

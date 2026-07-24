@@ -41,6 +41,20 @@ public class PaperSessionEntity implements Serializable {
 
     private String tocJson;
 
+    private Long formatTemplateId;
+
+    private String formatOverrideJson;
+
+    private String customFormatDocxPath;
+
+    private String customFormatDocxName;
+
+    private Long customFormatDocxSize;
+
+    private String customFormatJson;
+
+    private Integer customPatchStyles;
+
     private Date createTime;
 
     private Date updateTime;

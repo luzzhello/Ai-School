@@ -95,10 +95,21 @@ public class ThesisReduceServiceImpl implements IThesisReduceService {
             throw new ServiceException("分割方式不正确");
         }
 
-        List<String> segments = AigcTextSegmenter.split(content, splitMode);
+        List<String> segments;
         List<AigcOutlineSegmenter.OutlinePart> outlineParts = null;
         if ("outline".equals(splitMode)) {
-            outlineParts = AigcOutlineSegmenter.splitFromText(content);
+            outlineParts = AigcOutlineSegmenter.splitFromText(content).stream()
+                .filter(part -> StringUtils.isNotBlank(part.segmentText()))
+                .toList();
+            segments = outlineParts.stream()
+                .map(AigcOutlineSegmenter.OutlinePart::segmentText)
+                .toList();
+            if (segments.isEmpty()) {
+                throw new ServiceException("未能识别论文章节结构，请改用分段/分句或检查标题格式");
+            }
+        }
+        else {
+            segments = AigcTextSegmenter.split(content, splitMode);
         }
         return buildSplitResult(splitMode, segments, outlineParts);
     }

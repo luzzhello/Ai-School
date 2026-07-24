@@ -2,6 +2,12 @@ package org.ruoyi.service.draw.impl;
 
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.apache.pdfbox.Loader;
+import org.apache.pdfbox.io.RandomAccessReadBuffer;
+import org.apache.pdfbox.pdmodel.PDDocument;
+import org.apache.pdfbox.text.PDFTextStripper;
+import org.apache.poi.hwpf.HWPFDocument;
+import org.apache.poi.hwpf.extractor.WordExtractor;
 import org.ruoyi.common.core.exception.ServiceException;
 import org.ruoyi.common.core.utils.StringUtils;
 import org.ruoyi.domain.vo.draw.DocumentParseResultVo;
@@ -19,7 +25,7 @@ import java.util.Set;
 @RequiredArgsConstructor
 public class DocumentTextExtractServiceImpl implements IDocumentTextExtractService {
 
-    private static final Set<String> SUPPORTED = Set.of("txt", "docx");
+    private static final Set<String> SUPPORTED = Set.of("txt", "doc", "docx", "pdf");
     private static final long MAX_BYTES = 20L * 1024 * 1024;
 
     @Override
@@ -36,12 +42,15 @@ public class DocumentTextExtractServiceImpl implements IDocumentTextExtractServi
         }
         String ext = extractExtension(fileName);
         if (!SUPPORTED.contains(ext)) {
-            throw new ServiceException("不支持的文件格式，请上传 TXT 或 DOCX");
+            throw new ServiceException("不支持的文件格式，请上传 TXT、DOC、DOCX 或 PDF");
         }
 
         String content;
         try (InputStream inputStream = file.getInputStream()) {
             content = extractText(inputStream, ext);
+        }
+        catch (ServiceException e) {
+            throw e;
         }
         catch (IOException e) {
             log.warn("读取上传文件失败: {}", e.getMessage());
@@ -61,15 +70,44 @@ public class DocumentTextExtractServiceImpl implements IDocumentTextExtractServi
     }
 
     private String extractText(InputStream inputStream, String ext) throws IOException {
-        if ("txt".equals(ext)) {
-            return new String(inputStream.readAllBytes(), StandardCharsets.UTF_8);
-        }
+        return switch (ext) {
+            case "txt" -> new String(inputStream.readAllBytes(), StandardCharsets.UTF_8);
+            case "docx" -> extractDocx(inputStream);
+            case "doc" -> extractDoc(inputStream);
+            case "pdf" -> extractPdf(inputStream);
+            default -> throw new ServiceException("不支持的文件格式，请上传 TXT、DOC、DOCX 或 PDF");
+        };
+    }
+
+    private String extractDocx(InputStream inputStream) {
         try {
             return DocumentReducedPatcher.extractEditableText(inputStream);
         }
         catch (IOException e) {
             log.warn("DOCX 正文提取失败: {}", e.getMessage());
             throw new ServiceException("文件解析失败，请确认文件未损坏或改用 TXT 文本输入");
+        }
+    }
+
+    private String extractDoc(InputStream inputStream) {
+        try (HWPFDocument document = new HWPFDocument(inputStream);
+             WordExtractor extractor = new WordExtractor(document)) {
+            return extractor.getText();
+        }
+        catch (IOException e) {
+            log.warn("DOC 正文提取失败: {}", e.getMessage());
+            throw new ServiceException("文件解析失败，请确认文件未损坏，或另存为 DOCX/TXT 后重试");
+        }
+    }
+
+    private String extractPdf(InputStream inputStream) {
+        try (PDDocument document = Loader.loadPDF(new RandomAccessReadBuffer(inputStream))) {
+            PDFTextStripper stripper = new PDFTextStripper();
+            return stripper.getText(document);
+        }
+        catch (IOException e) {
+            log.warn("PDF 正文提取失败: {}", e.getMessage());
+            throw new ServiceException("文件解析失败，请确认 PDF 含可选中文字（非纯扫描件），或改用文本输入");
         }
     }
 
