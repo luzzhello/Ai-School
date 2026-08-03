@@ -16,6 +16,7 @@ import org.ruoyi.domain.dto.request.ErSqlOptimizeRequest;
 import org.ruoyi.domain.dto.response.ErDiagramResponse;
 import org.ruoyi.domain.dto.response.ErEntityAttributeDiagramVo;
 import org.ruoyi.domain.dto.response.ErEntityMetaVo;
+import org.ruoyi.domain.dto.response.ErNodeVo;
 import org.ruoyi.domain.dto.response.ErSqlOptimizeResponse;
 import org.ruoyi.domain.dto.response.ErSqlTestResponse;
 import org.ruoyi.domain.vo.chat.ChatPromptVo;
@@ -26,7 +27,10 @@ import org.ruoyi.service.usercenter.IFeatureCoinService;
 import org.springframework.stereotype.Service;
 
 import java.util.ArrayList;
+import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Set;
+import java.util.stream.Collectors;
 
 @Slf4j
 @Service
@@ -321,9 +325,16 @@ public class ErDiagramServiceImpl implements IErDiagramService {
 
     private ErDiagramResponse toResponse(ChenErLayoutBuilder.ErDiagramBundle bundle,
                                          List<ChenErLayoutBuilder.EntityDef> entityDefs) {
+        Set<String> overviewEntityLabels = bundle.overview().nodes().stream()
+            .filter(n -> "entity".equals(n.getType()))
+            .map(ErNodeVo::getLabel)
+            .collect(Collectors.toCollection(LinkedHashSet::new));
         List<ErEntityAttributeDiagramVo> attributeDiagrams = new ArrayList<>();
         List<ErEntityMetaVo> entityMetas = new ArrayList<>();
         for (ChenErLayoutBuilder.EntityDef def : entityDefs) {
+            if (!overviewEntityLabels.contains(def.name())) {
+                continue;
+            }
             ErEntityMetaVo meta = new ErEntityMetaVo();
             meta.setName(def.name());
             meta.setAttributes(def.attributes());

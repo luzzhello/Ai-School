@@ -1,15 +1,21 @@
+# crawl-task 允许 Cookie 留空；常规 crawl 仍需填写浏览器 Cookie
 # Cookie 含 JSON 双引号时必须用 | 块写法，不要用 "..." 包一整行
 cookie: |
   REPLACE_WITH_BROWSER_COOKIE
 user_agent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
-# 个人账号建议不要低于 2/5；过快极易触发安全验证
-list_delay_sec: 3.0
-detail_delay_sec: 6.0
-delay_jitter_sec: 2.0
+# 个人账号建议不要过低；并发关键词 + 过快极易触发安全验证
+list_delay_sec: 1.0
+detail_delay_sec: 2.0
+delay_jitter_sec: 0.5
+# crawl-task 关键词并发线程数；省略则一词一线程（上限 8）
+# keyword_workers: 4
 daily_detail_limit: 1000
 max_per_keyword: 100
-from_year: 2018
-to_year: 2026
+# 过去 N 年（含当年），每个关键词配额按年均分、逐年检索
+recent_years: 3
+# 也可用绝对年份（recent_years 未设置时生效）：
+# from_year: 2018
+# to_year: 2026
 # 总库语言：chinese=中文；foreign=外文（QueryJson.Rlang=FOREIGN + View=changeDBCh）
 search_lang: chinese
 # keywords_file: keywords/se.txt

@@ -51,6 +51,9 @@ public class PaperSession implements Serializable {
     /** 目录大纲树 */
     private List<TocNode> toc = new ArrayList<>();
 
+    /** 系统实现功能界面截图清单 */
+    private List<PaperUiScreenshot> uiScreenshots = new ArrayList<>();
+
     /** 已生成正文内容，key=章节 id，value=正文内容 */
     private Map<String, String> generatedContent = new LinkedHashMap<>();
 

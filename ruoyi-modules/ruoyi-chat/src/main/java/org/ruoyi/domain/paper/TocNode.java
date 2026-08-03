@@ -33,6 +33,19 @@ public class TocNode implements Serializable {
     /** 生成状态：pending（待生成）/ generating（生成中）/ done（已生成） */
     private String status = "pending";
 
+    /**
+     * 第五章叶子节绑定的多张功能界面截图（可空）。
+     * 顺序一般为列表 → 新增/编辑 → 详情。
+     */
+    private List<PaperUiScreenshotImage> screenshotImages = new ArrayList<>();
+
+    /**
+     * 兼容旧 TOC：单图 URL。新逻辑优先使用 {@link #screenshotImages}。
+     * @deprecated 使用 screenshotImages
+     */
+    @Deprecated
+    private String screenshotAssetUrl;
+
     /** 是否已生成内容 */
     private boolean generated;
 

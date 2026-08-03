@@ -131,6 +131,48 @@ public final class PaperChapterPrompts {
         return node != null && node.getTitle() != null && node.getTitle().contains("致谢");
     }
 
+    /**
+     * 系统设计 / 系统实现 / 系统测试及其下属小节：正文禁止文献引用。
+     * 按祖先路径标题关键词识别，兼容可编辑大纲（不依赖固定 chapterId）。
+     */
+    public static boolean isNoCitationChapter(String chapterId, TocNode node, List<TocNode> toc) {
+        if (node == null && StringUtils.isBlank(chapterId)) {
+            return false;
+        }
+        List<TocNode> path = PaperTocPathUtils.findPathToNode(
+            toc, node != null ? node.getId() : chapterId);
+        if (path.isEmpty() && node != null) {
+            path = List.of(node);
+        }
+        for (TocNode n : path) {
+            if (n != null && isDesignImplTestTitle(n.getTitle())) {
+                return true;
+            }
+        }
+        // 无路径时回退：当前标题或标准章号 4/5/6 + 关键词
+        if (node != null && isDesignImplTestTitle(node.getTitle())) {
+            return true;
+        }
+        int major = PaperTocPathUtils.resolveChapterMajor(node, toc);
+        if (major >= 4 && major <= 6) {
+            return true;
+        }
+        if (StringUtils.isNotBlank(chapterId)) {
+            String id = chapterId.toLowerCase(Locale.ROOT);
+            return id.startsWith("ch4") || id.startsWith("ch5") || id.startsWith("ch6");
+        }
+        return false;
+    }
+
+    private static boolean isDesignImplTestTitle(String title) {
+        if (StringUtils.isBlank(title)) {
+            return false;
+        }
+        return title.contains("系统设计")
+            || title.contains("系统实现")
+            || title.contains("系统测试");
+    }
+
     private static boolean isEnglishAbstractChapter(String chapterId, TocNode node) {
         if (StringUtils.isNotBlank(chapterId)) {
             String id = chapterId.toLowerCase();
@@ -768,12 +810,14 @@ public final class PaperChapterPrompts {
             5. 须从代码中提炼真实的 Controller/Service/Mapper 调用链、核心方法或接口逻辑；缺代码时用简短承接说明，不得编造类名/方法名；
             6. 仅写实现层面内容，不得重复第三章需求分析或第四章设计中的功能描述与流程说明；
             7. 描述须与论文题目及本模块功能一致；涉及数据表时使用中文表名，禁止写 sys_xxx 等物理表名；
-            8. 段落后可另起一行插入占位：【此处插入%s功能界面截图】，并说明截图应展示的主要界面元素。
+            8. 若本节涉及界面展示，按实际界面分别另起一行插入占位（有几类界面写几个，勿合并成一句）：
+               【此处插入%s列表界面截图】、【此处插入%s新增界面截图】、【此处插入%s详情界面截图】等；
+               并简要说明各截图应展示的主要界面元素；无对应界面可不写该占位。
 
             论文题目：%s
             代码参考：
             %s
-            """.formatted(title, PaperWritingStandards.FORBIDDEN_WORDS, moduleName, ctx.paperTitle(), ctx.codeSnippet());
+            """.formatted(title, PaperWritingStandards.FORBIDDEN_WORDS, moduleName, moduleName, moduleName, ctx.paperTitle(), ctx.codeSnippet());
     }
 
     // ==================== 第六章 系统测试 ====================

@@ -5,6 +5,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.ruoyi.common.core.exception.ServiceException;
 import org.ruoyi.common.core.utils.StringUtils;
 import org.ruoyi.domain.paper.PaperSession;
+import org.ruoyi.domain.paper.PaperUiScreenshot;
 import org.ruoyi.domain.paper.TocNode;
 import org.springframework.stereotype.Service;
 
@@ -37,6 +38,7 @@ public class PaperTocService {
         if (StringUtils.isBlank(session.getTitle())) {
             throw new ServiceException("请先填写论文题目");
         }
+        requireUiScreenshots(session);
 
         List<String> tables = session.getSqlParsed() == null ? List.of() : session.getSqlParsed().getTables();
         List<TocNode> toc = useDefaultTemplate
@@ -68,6 +70,7 @@ public class PaperTocService {
         if (toc == null || toc.isEmpty()) {
             return List.of();
         }
+        requireUiScreenshots(session);
         paperTocCustomizer.refreshChapter5Modules(toc, session);
         PaperTocNodeIds.assign(toc, "");
         applyWordLimits(toc, session);
@@ -79,5 +82,28 @@ public class PaperTocService {
     private void applyWordLimits(List<TocNode> toc, PaperSession session) {
         Integer target = session.getUserInputs() == null ? null : session.getUserInputs().getWordCount();
         PaperWordLimitAllocator.apply(toc, target);
+    }
+
+    /**
+     * 第五章「系统实现」完全由功能界面截图驱动，生成/刷新前必须至少上传一侧（管理员或用户）截图。
+     */
+    private void requireUiScreenshots(PaperSession session) {
+        List<PaperUiScreenshot> shots = session.getUiScreenshots();
+        if (shots == null || shots.isEmpty()) {
+            throw new ServiceException("请先上传系统功能截图（管理员或用户至少一侧）");
+        }
+        boolean hasImage = shots.stream().anyMatch(s -> {
+            if (s == null) {
+                return false;
+            }
+            if (s.getImages() != null) {
+                return s.getImages().stream().anyMatch(
+                    img -> img != null && StringUtils.isNotBlank(img.getAssetUrl()));
+            }
+            return StringUtils.isNotBlank(s.getAssetUrl());
+        });
+        if (!hasImage) {
+            throw new ServiceException("请先上传系统功能截图（管理员或用户至少一侧）");
+        }
     }
 }

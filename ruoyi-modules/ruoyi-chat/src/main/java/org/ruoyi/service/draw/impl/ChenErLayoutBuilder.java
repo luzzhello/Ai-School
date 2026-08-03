@@ -6,6 +6,7 @@ import org.ruoyi.domain.dto.response.ErNodeVo;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
@@ -60,10 +61,17 @@ final class ChenErLayoutBuilder {
     /** 总体 E-R 图 + 各实体属性图 */
     static ErDiagramBundle buildBundle(List<EntityDef> entities, List<RelationshipDef> relationships) {
         ChenDiagram overview = buildOverview(entities, relationships);
+        Set<String> overviewEntityLabels = overview.nodes().stream()
+            .filter(n -> "entity".equals(n.getType()))
+            .map(ErNodeVo::getLabel)
+            .collect(java.util.stream.Collectors.toCollection(java.util.LinkedHashSet::new));
         List<ChenDiagram> attrDiagrams = new ArrayList<>();
         List<String> entityNames = new ArrayList<>();
         int idx = 0;
         for (EntityDef entity : entities) {
+            if (!overviewEntityLabels.contains(entity.name())) {
+                continue;
+            }
             if (entity.attributes() == null || entity.attributes().isEmpty()) {
                 continue;
             }
@@ -242,7 +250,48 @@ final class ChenErLayoutBuilder {
 
         resolveEntityRelationshipOverlaps(nodes);
 
+        pruneDisconnectedOverview(nodes, edges);
+
         return new ChenDiagram(nodes, edges);
+    }
+
+    /** 总体图：移除未参与任何连线的实体及孤立关系菱形 */
+    private static void pruneDisconnectedOverview(List<ErNodeVo> nodes, List<ErEdgeVo> edges) {
+        Map<String, String> typeById = new HashMap<>();
+        for (ErNodeVo node : nodes) {
+            typeById.put(node.getId(), node.getType());
+        }
+
+        Set<String> connectedEntityIds = new HashSet<>();
+        for (ErEdgeVo edge : edges) {
+            if ("entity".equals(typeById.get(edge.getFrom()))) {
+                connectedEntityIds.add(edge.getFrom());
+            }
+            if ("entity".equals(typeById.get(edge.getTo()))) {
+                connectedEntityIds.add(edge.getTo());
+            }
+        }
+
+        nodes.removeIf(node -> "entity".equals(node.getType()) && !connectedEntityIds.contains(node.getId()));
+
+        Set<String> remainingIds = new HashSet<>();
+        for (ErNodeVo node : nodes) {
+            remainingIds.add(node.getId());
+        }
+        edges.removeIf(edge -> !remainingIds.contains(edge.getFrom()) || !remainingIds.contains(edge.getTo()));
+
+        Set<String> connectedRelIds = new HashSet<>();
+        for (ErEdgeVo edge : edges) {
+            connectedRelIds.add(edge.getFrom());
+            connectedRelIds.add(edge.getTo());
+        }
+        nodes.removeIf(node -> "relationship".equals(node.getType()) && !connectedRelIds.contains(node.getId()));
+
+        remainingIds.clear();
+        for (ErNodeVo node : nodes) {
+            remainingIds.add(node.getId());
+        }
+        edges.removeIf(edge -> !remainingIds.contains(edge.getFrom()) || !remainingIds.contains(edge.getTo()));
     }
 
     /** 单实体属性图：实体居中偏下，属性椭圆扇形向上展开（教材图 4.7） */

@@ -34,8 +34,9 @@ copy config.example.yaml config.yaml
 
 | 项 | 含义 |
 |----|------|
-| `list_delay_sec` / `detail_delay_sec` | 列表/详情基础间隔 |
+| `list_delay_sec` / `detail_delay_sec` | 列表/详情基础间隔（建议 ≥1s / ≥2s） |
 | `delay_jitter_sec` | 随机抖动 |
+| `keyword_workers` | crawl-task 关键词并发线程数（默认一词一线程，最多 8） |
 | `daily_detail_limit` | 单日详情上限 |
 | `max_per_keyword` | 每个关键词最多抓取条数 |
 | `from_year` / `to_year` | 年份过滤 |
@@ -50,6 +51,16 @@ python -m src --config config.yaml crawl
 # 单关键词试跑 5 条
 python -m src --config config.yaml crawl --keyword 软件测试 --max 5
 ```
+
+```bash
+# 全量按 keywords/se.txt
+python -m src --config config.yaml crawl --search-lang foreign
+
+# 单关键词试跑 5 条
+python -m src --config config.yaml crawl --search-lang foreign --keyword springboot --max 5
+```
+
+
 
 断点：`data/checkpoint.json` 记录已抓 URL、关键词页码、当日详情计数。中断后重新运行会跳过已完成 URL。
 

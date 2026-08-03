@@ -236,17 +236,13 @@ final class SqlChenErParser {
                 continue;
             }
             String body = sql.substring(bodyStart, bodyEnd);
-            for (String rawLine : body.split("\n")) {
-                String line = rawLine.trim();
-                if (!line.toUpperCase(Locale.ROOT).startsWith("FOREIGN KEY")) {
-                    continue;
-                }
-                Matcher fkMatcher = FK_LINE.matcher(line);
-                if (!fkMatcher.find()) {
-                    continue;
-                }
+            Matcher fkMatcher = FK_LINE.matcher(body);
+            while (fkMatcher.find()) {
                 String refTable = fkMatcher.group(1).toLowerCase(Locale.ROOT);
-                String relName = extractFkRelationComment(line);
+                int matchStart = fkMatcher.start();
+                int lineEnd = body.indexOf('\n', matchStart);
+                String context = body.substring(matchStart, lineEnd >= 0 ? lineEnd : body.length());
+                String relName = extractFkRelationComment(context);
                 addRelationship(relationships, tableToEntity, fromTable, refTable, relName);
             }
         }

@@ -1908,6 +1908,8 @@ public class WordExportService {
         if (StringUtils.isBlank(text)) {
             return;
         }
+        // 行内图片提升为独立块，否则 Word 会当正文丢掉插图
+        text = PaperUiScreenshotInjector.normalizeMarkdownImagesAsBlocks(text);
         String[] lines = text.replace("\r\n", "\n").replace("\r", "\n").split("\n", -1);
         boolean inCode = false;
         int i = 0;
@@ -2202,6 +2204,10 @@ public class WordExportService {
     private void addImageFromSrc(XWPFDocument doc, String src, String caption) {
         if (StringUtils.isBlank(src)) {
             return;
+        }
+        src = src.trim();
+        if (src.startsWith("//")) {
+            src = src.substring(1);
         }
         if (src.startsWith("data:image") && src.contains("/api/paper/assets/")) {
             src = src.substring(src.indexOf("/api/paper/assets/"));

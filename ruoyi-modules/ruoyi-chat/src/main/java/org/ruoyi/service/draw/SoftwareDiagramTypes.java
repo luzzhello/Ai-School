@@ -36,8 +36,9 @@ public final class SoftwareDiagramTypes {
             / association / aggregation（from 整体 to 部分）/ composition / dependency。
             关联/聚合/组合用 label 标多重性（1、*、1..*）。仅输出 JSON，不要代码块。"""),
         Map.entry("sequence", """
-            你是 UML 时序图建模专家。根据用户描述输出时序图 JSON（participants + messages），前端绘制标准 UML 时序图（生命线、实线/虚线箭头）。
+            你是 UML 时序图建模专家。根据用户描述输出时序图 JSON（participants + messages），前端绘制标准 UML 时序图（生命线、实线/虚线箭头、激活条）。
             participants.kind：actor=用户人形，object=系统对象，database=数据库。
+            participants.stereotype（非 actor 必填，BCE 分析类构造型）：boundary=边界（页面/前端/UI）、control=控制（Service/Controller/业务）、entity=实体（数据库/领域实体）。
             messages.type：sync=实线调用，return=虚线返回，async=虚线异步。messages 按时间顺序排列。
             仅输出 JSON，不要代码块。"""),
         Map.entry("usecase", """
@@ -75,7 +76,18 @@ public final class SoftwareDiagramTypes {
             nodes：id 英文；kind 取值 start/end/activity/decision；activity 与 decision 需 label 中文；必须含 1 个 start 与 1 个 end。
             flows：id 英文，from/to 引用 node id。
             仅输出 JSON，不要 markdown 代码块与解释。"""),
-        Map.entry("state", "你是 UML 状态图建模专家。" + GRAPH_BASE + " 状态 rect/circle，转移边 label 标注条件。"),
+        Map.entry("state", """
+            你是 UML 状态图建模专家。根据用户描述输出状态图 JSON（nodes + edges），前端按毕设规范渲染。
+
+            节点规则（强制）：
+            - 初始伪状态：shape=circle，label 必须为「初始」（仅 1 个）
+            - 终止伪状态：shape=circle，label 必须为「终止」（至少 1 个）
+            - 普通状态：shape=rect，label 中文状态名（如 待支付/已支付）
+            - 必须覆盖完整生命周期：初始 → … → 终止；每个业务状态最终都能到达终止
+
+            转移边 edges：from/to 引用节点 id；label 写触发事件/条件（可空）；禁止自环堆叠。
+            布局提示：自上而下；分支从同一状态出发。
+            仅输出 JSON，不要 markdown 代码块与解释。"""),
         Map.entry("object", "你是 UML 对象图建模专家。" + GRAPH_BASE + " 对象 rect，label 含 对象名:类名。"),
         Map.entry("component", "你是 UML 构件图建模专家。" + GRAPH_BASE + " 构件 rect，依赖用 edges。"),
         Map.entry("dfd", """
@@ -93,26 +105,12 @@ public final class SoftwareDiagramTypes {
             - 尽量按从上到下/从左到右布局，避免交叉线；为 nodes 填充合理的 x/y/width/height
             """),
         Map.entry("func_flow", """
-            你是标准流程图（功能流程图）建模专家。""" + GRAPH_BASE + """
-
-            标准流程图符号（必须严格遵守，参考教材/论文常用规范）：
-            - 开始/结束 Terminator：shape=ellipse，label 必须为“开始”“结束”（各 1 个）
-            - 处理过程 Process：shape=rect，label 用动宾短语（如“录入课程信息”“提交申请”“保存用户信息”）
-            - 判断 Decision：shape=diamond，label 必须是判断语句（如“是否验证通过”“参数是否合法”）
-            - 流向箭头 Flow：edges 表示控制流，尽量使用自上而下主干，分支左右展开
-
-            分支与回路（强制）：
-            - 每个 diamond 必须至少 2 条出边，并且每条出边都必须有 label：优先用“是/否”，或“通过/不通过”
-            - 允许回路（如“重新提交/返回修改”），但要避免交叉线；回路边 label 必须明确（如“重新提交”“返回修改”）
-            - 禁止生成多个“结束”节点：全图只能有 1 个 label=“结束”的 ellipse；所有分支最终必须汇合到同一个“结束”
-            - 若存在“撤销/取消/终止”等提前结束分支，也必须连到同一个“结束”节点，不得单独再画一个结束
-
-            布局与尺寸（强制）：
-            - 方向：从上到下为主，必要时左右分支；减少斜线与交叉线
-            - 建议尺寸：开始/结束 120×50；处理 160×56；判断 140×90（可按文字略增）
-            - nodes 必须填写合理 x/y/width/height
-
-            输出只允许 JSON（nodes + edges），不要 markdown 代码块与解释。
+            你是标准流程图（功能流程图）建模专家。只输出流程拓扑 JSON（nodes + edges）。
+            禁止输出 x/y/width/height/waypoints，禁止描述上下左右排版；前端算法负责全部布局与连线。
+            节点 shape：ellipse=开始/结束，rect=处理，diamond=判断。
+            拓扑：开始/结束各 1；每个 diamond 恰 2 出边且 label=是/否；
+            成功经推送成功通知直达结束；驳回经推送驳回通知→是否重新提交？（是回填写/提交，否→结束）；
+            禁止成功节点连驳回/重提。rect 短动宾；diamond 短问句≤12字。仅输出 JSON。
             """),
         Map.entry("func_structure", "你是功能结构图建模专家。" + GRAPH_BASE + " 系统/模块/功能 rect，树形 edges。"),
         Map.entry("architecture", """

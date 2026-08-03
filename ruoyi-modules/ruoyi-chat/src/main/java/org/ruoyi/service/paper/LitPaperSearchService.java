@@ -21,6 +21,9 @@ import java.util.regex.Pattern;
 /**
  * 文献库检索：中文查 {@code lit_paper}，英文查 {@code lit_paper_en}；不做「全部」混合检索。
  * <p>
+ * 检索策略：先将题目/关键词分词，每个词各查 {@code searchPerKeyword} 条，再合并去重，
+ * 总数不超过 {@code searchMaxTotal}（默认 10 / 50）。
+ * <p>
  * 英文库检索：若关键词含中文（用户常用中文题检索外文文献），
  * <b>一律匹配知网中译字段</b> {@code title_zh/keywords_zh/abstract_zh}；
  * 纯英文关键词再匹配原文 title/keywords/abstract。
@@ -39,38 +42,43 @@ public class LitPaperSearchService {
 
     /**
      * @param language 仅支持 {@code zh} / {@code en}；其它值抛错
+     * @param limit    期望条数上限（会再与 {@code searchMaxTotal} 取小）
      */
     public List<Reference> search(String keyword, String language, int limit) {
         if (StringUtils.isBlank(keyword) || limit <= 0) {
             return List.of();
         }
         String lang = normalizeLanguage(language);
-        String original = keyword.trim();
-        String query = LitQueryNormalizer.toSearchQuery(original);
-        if (StringUtils.isBlank(query)) {
-            query = original;
+        int perKeyword = Math.max(1, litPaperProperties.getSearchPerKeyword());
+        int maxTotal = Math.max(1, litPaperProperties.getSearchMaxTotal());
+        int effectiveLimit = Math.min(limit, maxTotal);
+
+        LitPaperProperties.OnDemand ondemand = litPaperProperties.getOndemand();
+        int minKw = ondemand != null ? ondemand.getMinKeywords() : 3;
+        int maxKw = ondemand != null ? ondemand.getMaxKeywords() : 5;
+        List<String> tokens = TitleKeywordSplitter.split(keyword.trim(), minKw, maxKw);
+        if (tokens.isEmpty()) {
+            tokens = List.of(keyword.trim());
         }
-        log.info("lit search lang={} original='{}' query='{}' limit={}", lang, original, query, limit);
+
+        log.info("lit search lang={} keyword='{}' tokens={} perKeyword={} limit={}",
+            lang, keyword.trim(), tokens, perKeyword, effectiveLimit);
 
         int fromYear = LocalDate.now().getYear() - litPaperProperties.getRecentYears();
-        // 英文库 + 中文检索词：强制走 *_zh（用原文判断，避免清洗后只剩英文专名）
-        boolean enZh = "en".equals(lang) && containsCjk(original);
-        List<LitPaperEntity> rows = enZh
-            ? searchEnZh(query, fromYear, limit)
-            : searchRows(lang, query, fromYear, limit);
-        if ((rows == null || rows.isEmpty()) && !query.equals(original)) {
-            rows = enZh
-                ? searchEnZh(original, fromYear, limit)
-                : searchRows(lang, original, fromYear, limit);
-        }
         Map<Long, Reference> uniq = new LinkedHashMap<>();
-        for (LitPaperEntity row : rows == null ? List.<LitPaperEntity>of() : rows) {
-            Reference ref = toReference(row, lang);
-            uniq.putIfAbsent(row.getId(), ref);
-            if (uniq.size() >= limit) {
+        for (String token : tokens) {
+            if (StringUtils.isBlank(token) || uniq.size() >= effectiveLimit) {
                 break;
             }
+            List<LitPaperEntity> rows = searchBySingleKeyword(token, lang, fromYear, perKeyword);
+            for (LitPaperEntity row : rows) {
+                uniq.putIfAbsent(row.getId(), toReference(row, lang));
+                if (uniq.size() >= effectiveLimit) {
+                    break;
+                }
+            }
         }
+
         List<Reference> list = new ArrayList<>(uniq.values());
         for (int i = 0; i < list.size(); i++) {
             list.get(i).setIndex(i + 1);
@@ -87,6 +95,35 @@ public class LitPaperSearchService {
             return lang;
         }
         throw new ServiceException("文献语言仅支持中文(zh)或英文(en)");
+    }
+
+    /**
+     * 单关键词检索（不做二次分词），最多返回 {@code limit} 条。
+     */
+    private List<LitPaperEntity> searchBySingleKeyword(String keyword, String lang, int fromYear, int limit) {
+        String original = keyword.trim();
+        String query = LitQueryNormalizer.toSearchQuery(original);
+        if (StringUtils.isBlank(query)) {
+            query = original;
+        }
+
+        // 英文库 + 中文检索词：强制走 *_zh（用原文判断，避免清洗后只剩英文专名）
+        boolean enZh = "en".equals(lang) && containsCjk(original);
+        List<LitPaperEntity> rows = enZh
+            ? searchEnZh(query, fromYear, limit)
+            : searchRows(lang, query, fromYear, limit);
+        if ((rows == null || rows.isEmpty()) && !query.equals(original)) {
+            rows = enZh
+                ? searchEnZh(original, fromYear, limit)
+                : searchRows(lang, original, fromYear, limit);
+        }
+        if (rows == null || rows.isEmpty()) {
+            return List.of();
+        }
+        if (rows.size() <= limit) {
+            return rows;
+        }
+        return new ArrayList<>(rows.subList(0, limit));
     }
 
     private List<LitPaperEntity> searchRows(String lang, String query, int fromYear, int fetch) {

@@ -15,16 +15,22 @@ import org.ruoyi.domain.dto.request.PaperGenerateChapterRequest;
 import org.ruoyi.domain.dto.request.PaperReferencesRequest;
 import org.ruoyi.domain.dto.request.PaperRewriteSegmentRequest;
 import org.ruoyi.domain.dto.request.PaperSaveChapterRequest;
+import org.ruoyi.domain.dto.request.PaperScreenshotsAnalyzeRequest;
+import org.ruoyi.domain.dto.request.PaperScreenshotsSaveRequest;
 import org.ruoyi.domain.dto.request.PaperSessionFormatUpdateRequest;
+import org.ruoyi.domain.dto.request.PaperLitOnDemandStartRequest;
 import org.ruoyi.domain.dto.request.PaperTocRequest;
 import org.ruoyi.domain.dto.request.PaperUpdateTocRequest;
 import org.ruoyi.domain.dto.request.PaperUpdateInputsRequest;
 import org.ruoyi.domain.dto.response.PaperParseSqlResponse;
 import org.ruoyi.domain.dto.response.PaperRewriteSegmentResultVo;
+import org.ruoyi.domain.dto.response.PaperScreenshotsAnalyzeResponse;
 import org.ruoyi.domain.dto.response.PaperSessionFormatVo;
+import org.ruoyi.domain.vo.paper.LitOnDemandStatusVo;
 import org.ruoyi.domain.paper.PaperSession;
 import org.ruoyi.domain.paper.PaperSessionSummary;
 import org.ruoyi.domain.paper.PaperSession.SqlParsed;
+import org.ruoyi.domain.paper.PaperUiScreenshot;
 import org.ruoyi.domain.paper.TocNode;
 import org.ruoyi.domain.paper.format.PaperFormatConfig;
 import org.ruoyi.domain.paper.format.PaperFormatDefaults;
@@ -74,6 +80,8 @@ public class PaperController {
     private final PaperFormatTemplateService paperFormatTemplateService;
     private final PaperSessionCustomFormatService paperSessionCustomFormatService;
     private final PaperRewriteService paperRewriteService;
+    private final PaperScreenshotService paperScreenshotService;
+    private final LitOnDemandService litOnDemandService;
 
     /**
      * 创建论文生成会话。题目与基础输入可选，创建后返回 sessionId。
@@ -333,7 +341,19 @@ public class PaperController {
         List<TocNode> refreshedToc = null;
         boolean tocRefreshed = false;
         PaperSession session = paperSessionStore.get(request.getSessionId());
-        if (session.getToc() != null && !session.getToc().isEmpty()) {
+        boolean hasUiScreenshots = session.getUiScreenshots() != null
+            && session.getUiScreenshots().stream().anyMatch(g -> {
+                if (g == null) {
+                    return false;
+                }
+                if (g.getImages() != null && g.getImages().stream()
+                    .anyMatch(img -> img != null && org.ruoyi.common.core.utils.StringUtils.isNotBlank(img.getAssetUrl()))) {
+                    return true;
+                }
+                return org.ruoyi.common.core.utils.StringUtils.isNotBlank(g.getAssetUrl());
+            });
+        // 第五章完全由功能界面截图驱动：未上传截图时跳过自动刷新，既不抛异常也不回退到 SQL 表结构。
+        if (session.getToc() != null && !session.getToc().isEmpty() && hasUiScreenshots) {
             refreshedToc = paperTocService.refreshChapter5(request.getSessionId());
             tocRefreshed = true;
         }
@@ -374,6 +394,27 @@ public class PaperController {
     }
 
     /**
+     * 保存系统实现功能界面截图清单（整表覆盖，管理员/用户两侧合并提交）。
+     */
+    @PutMapping("/screenshots")
+    public R<Void> saveScreenshots(@RequestBody @Valid PaperScreenshotsSaveRequest request) {
+        Long userId = LoginHelper.getUserId();
+        paperSessionStore.require(request.getSessionId(), userId);
+        paperScreenshotService.save(request.getSessionId(), request.getScreenshots());
+        return R.ok();
+    }
+
+    /**
+     * 调用视觉模型识别截图对应的功能名称；items 为空则识别会话内当前全部截图。
+     */
+    @PostMapping("/screenshots/analyze")
+    public R<PaperScreenshotsAnalyzeResponse> analyzeScreenshots(@RequestBody @Valid PaperScreenshotsAnalyzeRequest request) {
+        Long userId = LoginHelper.getUserId();
+        paperSessionStore.require(request.getSessionId(), userId);
+        return R.ok(paperScreenshotService.analyze(request.getSessionId(), request.getItems()));
+    }
+
+    /**
      * 生成论文目录大纲（树形），存入会话并返回。
      */
     @PostMapping("/toc")
@@ -384,6 +425,25 @@ public class PaperController {
             request.getSessionId(),
             request.getModel(),
             Boolean.TRUE.equals(request.getUseDefaultTemplate())));
+    }
+
+    /**
+     * 按题目拆词启动按需文献抓取（异步），与大纲生成并行调用。
+     */
+    @PostMapping("/lit-ondemand/start")
+    public R<Map<String, String>> startLitOnDemand(@RequestBody @Valid PaperLitOnDemandStartRequest request) {
+        Long userId = LoginHelper.getUserId();
+        String taskId = litOnDemandService.start(request.getSessionId(), userId);
+        return R.ok(Map.of("taskId", taskId));
+    }
+
+    /**
+     * 查询按需文献抓取进度。
+     */
+    @GetMapping("/lit-ondemand/{taskId}")
+    public R<LitOnDemandStatusVo> litOnDemandStatus(@PathVariable String taskId) {
+        Long userId = LoginHelper.getUserId();
+        return R.ok(litOnDemandService.getStatus(taskId, userId));
     }
 
     /**

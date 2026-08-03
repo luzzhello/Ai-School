@@ -16,6 +16,7 @@ import org.ruoyi.common.chat.service.chat.IChatModelService;
 import org.ruoyi.common.core.exception.ServiceException;
 import org.ruoyi.common.core.utils.StringUtils;
 import org.ruoyi.config.ErDiagramProperties;
+import org.ruoyi.domain.paper.PaperUiScreenshotImage;
 import org.ruoyi.domain.paper.SqlColumnInfo;
 import org.ruoyi.domain.paper.PaperSession;
 import org.ruoyi.domain.paper.Reference;
@@ -272,14 +273,42 @@ public class PaperGenerateService {
         if (PaperChapterPrompts.isAcknowledgementChapter(chapterId, chapterNode)) {
             content = PaperChapterContentSanitizer.sanitizeAcknowledgementPlaceholders(content);
         }
-        // 引用角标后质检：摘要/致谢去掉数字角标；参考文献列表节保留；其余节仅保留已确认序号
+        // 引用角标后质检：摘要/致谢/设计·实现·测试去掉数字角标；参考文献列表节保留；其余节仅保留已确认序号
+        List<TocNode> toc = session == null ? null : session.getToc();
         if (PaperChapterPrompts.isAbstractChapter(chapterId, chapterNode)
-            || PaperChapterPrompts.isAcknowledgementChapter(chapterId, chapterNode)) {
+            || PaperChapterPrompts.isAcknowledgementChapter(chapterId, chapterNode)
+            || PaperChapterPrompts.isNoCitationChapter(chapterId, chapterNode, toc)) {
             content = PaperCitationSanitizer.stripAllNumericCitations(content);
         } else if (!PaperReferenceContentHelper.isReferenceChapter(chapterId, chapterNode)) {
             content = PaperCitationSanitizer.sanitizeToValidIndexes(
                 content, PaperCitationSanitizer.collectValidIndexes(
                     session == null ? null : session.getReferences()));
+        }
+        if (chapterNode != null) {
+            List<PaperUiScreenshotImage> images = chapterNode.getScreenshotImages();
+            if (images != null && !images.isEmpty()) {
+                String bare = extractBareTitle(chapterTitle);
+                int chapterNo = PaperUiScreenshotInjector.extractChapterNo(chapterTitle);
+                int startFig = PaperUiScreenshotInjector.nextFigureIndex(
+                    chapterNo,
+                    session == null ? null : session.getGeneratedContent(),
+                    content);
+                content = PaperUiScreenshotInjector.injectAll(
+                    content, images, bare, chapterNo, startFig);
+            } else if (StringUtils.isNotBlank(chapterNode.getScreenshotAssetUrl())) {
+                String bare = extractBareTitle(chapterTitle);
+                int chapterNo = PaperUiScreenshotInjector.extractChapterNo(chapterTitle);
+                int startFig = PaperUiScreenshotInjector.nextFigureIndex(
+                    chapterNo,
+                    session == null ? null : session.getGeneratedContent(),
+                    content);
+                content = PaperUiScreenshotInjector.injectAll(
+                    content,
+                    List.of(legacyScreenshotImage(chapterNode.getScreenshotAssetUrl())),
+                    bare,
+                    chapterNo,
+                    startFig);
+            }
         }
         final String finalContent = content;
         paperSessionStore.update(sessionId, s -> {
@@ -297,6 +326,23 @@ public class PaperGenerateService {
         });
         sendEvent(emitter, Map.of("type", "done", "chapterId", chapterId, "content", finalContent));
         emitter.complete();
+    }
+
+    /**
+     * 去除标题前导的章节编号（如「5.1.1 」「5.1.1」），仅保留可读功能名，供图题使用。
+     */
+    private String extractBareTitle(String title) {
+        if (StringUtils.isBlank(title)) {
+            return title;
+        }
+        return title.trim().replaceFirst("^[0-9]+(?:\\.[0-9]+)*\\s*", "").trim();
+    }
+
+    private static PaperUiScreenshotImage legacyScreenshotImage(String assetUrl) {
+        PaperUiScreenshotImage image = new PaperUiScreenshotImage();
+        image.setAssetUrl(assetUrl);
+        image.setLabel(null);
+        return image;
     }
 
     /**
@@ -335,12 +381,16 @@ public class PaperGenerateService {
 
         try {
             StreamingChatModel chatModel = buildStreamingModel(resolveModelName(model));
-            List<ChatMessage> messages = List.of(SystemMessage.from(SYSTEM_PROMPT), UserMessage.from(userPrompt));
+            boolean noCitation = PaperChapterPrompts.isNoCitationChapter(chapterId, node, session.getToc());
+            String systemPrompt = noCitation
+                ? PaperWritingStandards.SYSTEM_ROLE_NO_CITATION
+                : SYSTEM_PROMPT;
+            List<ChatMessage> messages = List.of(SystemMessage.from(systemPrompt), UserMessage.from(userPrompt));
 
             sendEvent(emitter, Map.of("type", "start", "chapterId", chapterId));
             markChapterStatus(sessionId, chapterId, "generating");
 
-            log.info("AI 逐章生成, sessionId={}, chapterId={}", sessionId, chapterId);
+            log.info("AI 逐章生成, sessionId={}, chapterId={}, noCitation={}", sessionId, chapterId, noCitation);
             chatModel.chat(messages, new ChapterStreamHandler(
                 sessionId, chapterId, session, resolveModelName(model), emitter));
         } catch (ServiceException e) {
@@ -457,13 +507,20 @@ public class PaperGenerateService {
             ctx.append("\n【论文整体大纲（保持章节连贯、避免与其他章节重复）】\n").append(outline);
         }
         String chapterId = node != null ? node.getId() : null;
+        boolean noCitation = PaperChapterPrompts.isNoCitationChapter(chapterId, node, session.getToc());
         String refsList = formatRefsForCitation(session);
-        if (StringUtils.isNotBlank(refsList)
+        if (!noCitation
+            && StringUtils.isNotBlank(refsList)
             && !PaperReferenceContentHelper.isReferenceChapter(chapterId, node)
             && !isAcknowledgementTitle(node)) {
             ctx.append("\n【可引用参考文献（正文只用[n]角标，勿输出完整引文）】\n").append(refsList);
         }
-        ctx.append(PaperWritingStandards.USER_APPENDIX);
+        if (noCitation) {
+            ctx.append("\n【文献引用】本节为系统设计 / 系统实现 / 系统测试类正文，禁止出现文献角标[n]及任何参考文献引用。");
+            ctx.append(PaperWritingStandards.USER_APPENDIX_NO_CITATION);
+        } else {
+            ctx.append(PaperWritingStandards.USER_APPENDIX);
+        }
         return ctx.toString();
     }
 

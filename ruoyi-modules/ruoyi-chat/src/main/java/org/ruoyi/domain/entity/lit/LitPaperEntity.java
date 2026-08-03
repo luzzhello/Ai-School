@@ -1,5 +1,6 @@
 package org.ruoyi.domain.entity.lit;
 
+import com.baomidou.mybatisplus.annotation.TableField;
 import com.baomidou.mybatisplus.annotation.TableId;
 import com.baomidou.mybatisplus.annotation.TableName;
 import lombok.Data;
@@ -32,13 +33,18 @@ public class LitPaperEntity implements Serializable {
 
     private String keywords;
 
-    /** 知网外文中译题名（仅 lit_paper_en） */
+    /**
+     * 知网外文中译字段：仅存在于 {@code lit_paper_en}。
+     * 标为非表字段，避免 BaseMapper 查 {@code lit_paper} 时带上 title_zh 等列；
+     * 外文检索自定义 SQL 映射到本实体时仍可填充。
+     */
+    @TableField(exist = false)
     private String titleZh;
 
-    /** 知网外文中译摘要（仅 lit_paper_en） */
+    @TableField(exist = false)
     private String abstractZh;
 
-    /** 知网外文中译关键词（仅 lit_paper_en） */
+    @TableField(exist = false)
     private String keywordsZh;
 
     private String source;

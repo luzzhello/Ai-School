@@ -297,3 +297,24 @@ AGENT_ALLOWED_TABLES: ""
 # 课设代码模板（可选，默认使用 classpath 内嵌 template.zip）
 course-code:
   template-dir: D:/chromedownload/code
+
+--- # 论文文献库检索
+paper:
+  lit:
+    recent-years: 5
+    # 库内检索：题目分词后每词查 N 条，合并去重后最多 M 条
+    search-per-keyword: 10
+    search-max-total: 50
+    ondemand:
+      enabled: true
+      min-keywords: 3
+      max-keywords: 5
+      max-per-keyword: 20
+      task-timeout-sec: 600
+      list-only: true
+      python-executable: python
+      crawler-work-dir: tools/cnki-crawler
+      config-path: config.yaml
+      db-ready-min-count: 50
+      auto-select-zh: 18
+      auto-select-en: 2

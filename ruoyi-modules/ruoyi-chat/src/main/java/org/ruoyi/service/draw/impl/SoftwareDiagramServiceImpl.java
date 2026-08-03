@@ -325,11 +325,11 @@ public class SoftwareDiagramServiceImpl implements ISoftwareDiagramService {
 
             { "id": "user", "label": "用户", "kind": "actor" },
 
-            { "id": "login", "label": "登录页面", "kind": "object" },
+            { "id": "login", "label": "登录页面", "kind": "object", "stereotype": "boundary" },
 
-            { "id": "auth", "label": "认证服务", "kind": "object" },
+            { "id": "auth", "label": "认证服务", "kind": "object", "stereotype": "control" },
 
-            { "id": "db", "label": "用户数据库", "kind": "database" }
+            { "id": "db", "label": "用户数据库", "kind": "database", "stereotype": "entity" }
 
           ],
 
@@ -353,7 +353,7 @@ public class SoftwareDiagramServiceImpl implements ISoftwareDiagramService {
     private static final Map<String, String> SHAPE_HINTS = Map.ofEntries(
 
 
-        Map.entry("state", "状态 rect 或 circle，转移边 label 标注条件。"),
+        Map.entry("state", "状态图：初始/终止用 circle（label=初始/终止），普通状态 rect；必须含完整生命周期到终止；转移边 label 写事件。"),
 
         Map.entry("object", "对象 rect，label 含 对象名:类名 及属性值。"),
 
@@ -362,10 +362,8 @@ public class SoftwareDiagramServiceImpl implements ISoftwareDiagramService {
         Map.entry("dfd", "外部实体 rect，处理 rect，数据存储可用 ellipse；数据流 label 标注数据名。"),
 
         Map.entry("func_flow", """
-            标准流程图符号：开始/结束 ellipse（label=开始/结束各 1 个）；处理 rect；判断 diamond。
-            每个判断节点必须至少 2 条出边，且每条出边必须有 label（是/否 或 通过/不通过）。
-            禁止出现多个“结束”节点：全图只能有 1 个 label=结束 的 ellipse；所有分支最终汇合到同一结束节点。
-            主流程自上而下，分支左右展开，尽量避免交叉线；nodes 填写合理 x/y/width/height。
+            只输出 nodes+edges 拓扑，不要坐标与布局。开始/结束 ellipse 各 1；处理 rect 动宾短语；判断 diamond 短问句。
+            每个判断恰 2 出边且标「是」「否」。成功→推送成功通知→结束；驳回→推送驳回通知→是否重新提交（是回填表，否结束）。禁止成功混入重提。
             """),
 
         Map.entry("func_structure", "系统/模块/功能 rect，树形层级用 edges 连接。"),
@@ -431,7 +429,9 @@ public class SoftwareDiagramServiceImpl implements ISoftwareDiagramService {
 
                 + "\n\n严格输出 JSON，不要 markdown 代码块，结构如下：\n" + SEQUENCE_JSON_SCHEMA
 
-                + "\n\n要求：participants.kind 取值 actor/object/database；messages 按时间顺序排列；"
+                + "\n\n要求：participants.kind 取值 actor/object/database；"
+                + "非 actor 必须填 stereotype（boundary/control/entity，对应边界/控制/实体）；"
+                + "messages 按时间顺序排列；"
 
                 + "type=sync 表示实线调用，type=return 表示虚线返回，type=async 表示异步。"
 

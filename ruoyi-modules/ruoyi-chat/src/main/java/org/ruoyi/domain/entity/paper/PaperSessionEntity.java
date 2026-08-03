@@ -41,6 +41,9 @@ public class PaperSessionEntity implements Serializable {
 
     private String tocJson;
 
+    /** 系统实现截图清单 JSON */
+    private String uiScreenshotsJson;
+
     private Long formatTemplateId;
 
     private String formatOverrideJson;

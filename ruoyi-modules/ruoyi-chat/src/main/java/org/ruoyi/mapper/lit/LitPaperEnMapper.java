@@ -3,17 +3,19 @@ package org.ruoyi.mapper.lit;
 import org.apache.ibatis.annotations.Mapper;
 import org.apache.ibatis.annotations.Param;
 import org.apache.ibatis.annotations.Select;
+import org.ruoyi.common.mybatis.core.mapper.BaseMapperPlus;
+import org.ruoyi.domain.entity.lit.LitPaperEnEntity;
 import org.ruoyi.domain.entity.lit.LitPaperEntity;
 
 import java.util.List;
 
 /**
- * 外文文献表 {@code lit_paper_en}；结果列与 {@link LitPaperEntity} 对齐。
+ * 外文文献表 {@code lit_paper_en}；检索结果列与 {@link LitPaperEntity} 对齐。
  * <p>
  * 英文检索走原文 FULLTEXT；中文检索走知网中译字段 {@code title_zh/keywords_zh/abstract_zh}（ngram）。
  */
 @Mapper
-public interface LitPaperEnMapper {
+public interface LitPaperEnMapper extends BaseMapperPlus<LitPaperEnEntity, LitPaperEnEntity> {
 
     @Select("""
         SELECT * FROM lit_paper_en

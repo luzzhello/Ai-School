@@ -3,10 +3,13 @@ package org.ruoyi.service.paper;
 import lombok.extern.slf4j.Slf4j;
 import org.ruoyi.common.core.utils.StringUtils;
 import org.ruoyi.domain.paper.PaperSession;
+import org.ruoyi.domain.paper.PaperUiScreenshot;
+import org.ruoyi.domain.paper.PaperUiScreenshotImage;
 import org.ruoyi.domain.paper.TocNode;
 import org.springframework.stereotype.Component;
 
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.List;
 import java.util.Locale;
 import java.util.regex.Matcher;
@@ -136,46 +139,113 @@ public class PaperTocCustomizer {
         return null;
     }
 
+    private static final Comparator<PaperUiScreenshot> SHOT_ORDER = Comparator
+        .comparing((PaperUiScreenshot s) -> s.getSort() == null ? Integer.MAX_VALUE : s.getSort())
+        .thenComparing(s -> s.getId() == null ? "" : s.getId());
+
+    /**
+     * 第五章「系统实现」子模块完全由 {@link PaperSession#getUiScreenshots()} 驱动：
+     * 每个功能组（可含多张界面截图）对应一个三级叶子节点；管理员/用户两侧分别归入分支，
+     * 「本章小结」始终作为最后一个二级节点。
+     */
     private void rebuildChapter5Modules(List<TocNode> toc, PaperSession session) {
         TocNode ch5 = findNodeByTitleKeyword(toc, "系统实现");
         if (ch5 == null) {
             return;
         }
-        List<String> tables = session.getSqlParsed() == null ? List.of() : session.getSqlParsed().getTables();
-        String summary = session.getSqlParsed() == null ? null : session.getSqlParsed().getSummary();
-        PaperBusinessModuleResolver.BusinessModuleGroups groups = PaperBusinessModuleResolver.resolve(
-            tables, session.getSqlParsed(), session.getTitle(), summary, 8);
-        List<String> adminFuncs = groups.adminFunctions().stream()
-            .filter(f -> !PaperBusinessModuleResolver.isVagueFunctionName(f))
+        List<PaperUiScreenshot> shots = session.getUiScreenshots() == null ? List.of() : session.getUiScreenshots();
+        List<PaperUiScreenshot> adminShots = shots.stream()
+            .filter(s -> "admin".equalsIgnoreCase(s.getModule()))
+            .filter(PaperTocCustomizer::hasAnyImage)
+            .sorted(SHOT_ORDER)
             .toList();
-        List<String> userFuncs = PaperBusinessModuleResolver.finalizeUserFunctions(
-            groups.userFunctions(), adminFuncs, session.getTitle(), summary, tables, session.getSqlParsed(), 8);
-        String userLabel = PaperBusinessModuleResolver.resolveUserRoleLabel(session.getTitle());
+        List<PaperUiScreenshot> userShots = shots.stream()
+            .filter(s -> "user".equalsIgnoreCase(s.getModule()))
+            .filter(PaperTocCustomizer::hasAnyImage)
+            .sorted(SHOT_ORDER)
+            .toList();
 
         List<TocNode> children = new ArrayList<>();
+        int branchIndex = 1;
 
-        TocNode adminBranch = branchNode("5.1 管理员功能模块", 2);
-        List<TocNode> adminLeaves = new ArrayList<>();
-        int adminIndex = 1;
-        for (String func : adminFuncs) {
-            adminLeaves.add(leafNode("5.1." + adminIndex + " " + func, 3));
-            adminIndex++;
+        if (!adminShots.isEmpty()) {
+            children.add(buildScreenshotBranch("5." + branchIndex, "管理员功能模块", adminShots));
+            branchIndex++;
         }
-        adminBranch.setChildren(adminLeaves);
-        children.add(adminBranch);
 
-        TocNode userBranch = branchNode("5.2 " + userLabel + "功能模块", 2);
-        List<TocNode> userLeaves = new ArrayList<>();
-        int userIndex = 1;
-        for (String func : userFuncs) {
-            userLeaves.add(leafNode("5.2." + userIndex + " " + func, 3));
-            userIndex++;
+        if (!userShots.isEmpty()) {
+            String userLabel = PaperBusinessModuleResolver.resolveUserRoleLabel(session.getTitle());
+            children.add(buildScreenshotBranch("5." + branchIndex, userLabel + "功能模块", userShots));
+            branchIndex++;
         }
-        userBranch.setChildren(userLeaves);
-        children.add(userBranch);
 
-        children.add(leafNode("5.3 本章小结", 2));
+        children.add(leafNode("5." + branchIndex + " 本章小结", 2));
         ch5.setChildren(children);
+    }
+
+    private static boolean hasAnyImage(PaperUiScreenshot shot) {
+        if (shot == null) {
+            return false;
+        }
+        if (shot.getImages() != null) {
+            for (PaperUiScreenshotImage img : shot.getImages()) {
+                if (img != null && StringUtils.isNotBlank(img.getAssetUrl())) {
+                    return true;
+                }
+            }
+        }
+        return StringUtils.isNotBlank(shot.getAssetUrl());
+    }
+
+    private TocNode buildScreenshotBranch(String sectionPrefix, String branchTitle, List<PaperUiScreenshot> shots) {
+        TocNode branch = branchNode(sectionPrefix + " " + branchTitle, 2);
+        List<TocNode> leaves = new ArrayList<>();
+        int leafIndex = 1;
+        for (PaperUiScreenshot shot : shots) {
+            TocNode leaf = leafNode(sectionPrefix + "." + leafIndex + " " + screenshotDisplayTitle(shot), 3);
+            List<PaperUiScreenshotImage> images = collectImages(shot);
+            leaf.setScreenshotImages(images);
+            if (!images.isEmpty()) {
+                leaf.setScreenshotAssetUrl(images.get(0).getAssetUrl());
+            }
+            leaves.add(leaf);
+            leafIndex++;
+        }
+        branch.setChildren(leaves);
+        return branch;
+    }
+
+    private static List<PaperUiScreenshotImage> collectImages(PaperUiScreenshot shot) {
+        List<PaperUiScreenshotImage> list = new ArrayList<>();
+        if (shot.getImages() != null) {
+            for (PaperUiScreenshotImage img : shot.getImages()) {
+                if (img != null && StringUtils.isNotBlank(img.getAssetUrl())) {
+                    list.add(img);
+                }
+            }
+        }
+        if (list.isEmpty() && StringUtils.isNotBlank(shot.getAssetUrl())) {
+            PaperUiScreenshotImage legacy = new PaperUiScreenshotImage();
+            legacy.setAssetUrl(shot.getAssetUrl());
+            legacy.setLabel("其他");
+            legacy.setSort(0);
+            list.add(legacy);
+        }
+        return list;
+    }
+
+    /**
+     * 叶子标题：去空白 → 空则用「功能界面」→ 已以「功能」结尾则不重复追加，否则追加「功能」。
+     */
+    static String screenshotDisplayTitle(PaperUiScreenshot shot) {
+        String title = shot.getTitle() == null ? "" : shot.getTitle().trim();
+        if (title.isEmpty()) {
+            return "功能界面";
+        }
+        if (title.endsWith("功能")) {
+            return title;
+        }
+        return title + "功能";
     }
 
     private TocNode leafNode(String title, int level) {

@@ -10,7 +10,7 @@ class ConfigError(Exception):
     pass
 
 
-def load_config(path: str | Path) -> dict[str, Any]:
+def load_config(path: str | Path, *, allow_empty_cookie: bool = False) -> dict[str, Any]:
     cfg_path = Path(path)
     if not cfg_path.exists():
         raise ConfigError(f"config not found: {cfg_path} (copy config.example.yaml to config.yaml)")
@@ -24,9 +24,11 @@ def load_config(path: str | Path) -> dict[str, Any]:
             "  你的Cookie整行粘贴在这里"
         ) from e
     cookie = str(data.get("cookie") or "").strip()
-    data["cookie"] = cookie
-    if not cookie or cookie.startswith("REPLACE_WITH"):
+    if allow_empty_cookie and (not cookie or cookie.startswith("REPLACE_WITH")):
+        cookie = ""
+    elif not cookie or cookie.startswith("REPLACE_WITH"):
         raise ConfigError("config.cookie must be set to a real browser Cookie string")
+    data["cookie"] = cookie
     return data
 
 

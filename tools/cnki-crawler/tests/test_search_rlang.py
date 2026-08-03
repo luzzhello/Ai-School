@@ -27,8 +27,9 @@ def test_build_query_json_foreign_matches_capture():
     assert q["QNode"]["QGroup"][0]["Items"][0]["Value"] == "The International Congress on Hazardous"
 
 
-def test_build_query_json_chinese_has_no_change_view():
+def test_build_query_json_chinese_has_change_view():
     raw = build_query_json("软件工程", from_year=2020, to_year=2026, search_from=1, rlang="chinese")
     q = json.loads(raw)
     assert q["Rlang"] == "CHINESE"
-    assert "View" not in q
+    assert q["View"] == "changeDBCh"
+    assert "EMRPGLPA" in q["KuaKuCode"]

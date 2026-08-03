@@ -12,6 +12,7 @@ import org.ruoyi.domain.entity.paper.PaperReferenceEntity;
 import org.ruoyi.domain.entity.paper.PaperSessionEntity;
 import org.ruoyi.domain.paper.PaperSession;
 import org.ruoyi.domain.paper.PaperSessionSummary;
+import org.ruoyi.domain.paper.PaperUiScreenshot;
 import org.ruoyi.domain.paper.Reference;
 import org.ruoyi.domain.paper.TocNode;
 import org.ruoyi.mapper.paper.PaperChapterMapper;
@@ -37,6 +38,7 @@ public class PaperSessionPersistence {
 
     private static final TypeReference<List<TocNode>> TOC_TYPE = new TypeReference<>() {};
     private static final TypeReference<PaperSession.SqlParsed> SQL_PARSED_TYPE = new TypeReference<>() {};
+    private static final TypeReference<List<PaperUiScreenshot>> UI_SCREENSHOTS_TYPE = new TypeReference<>() {};
 
     private final PaperSessionMapper sessionMapper;
     private final PaperReferenceMapper referenceMapper;
@@ -186,6 +188,7 @@ public class PaperSessionPersistence {
 
         session.setSqlParsed(parseJson(entity.getSqlParsedJson(), SQL_PARSED_TYPE, new PaperSession.SqlParsed()));
         session.setToc(parseJson(entity.getTocJson(), TOC_TYPE, new ArrayList<>()));
+        session.setUiScreenshots(parseJson(entity.getUiScreenshotsJson(), UI_SCREENSHOTS_TYPE, new ArrayList<>()));
         session.setReferences(loadReferences(entity.getSessionId()));
 
         List<PaperChapterEntity> chapterRows = chapterMapper.selectList(
@@ -228,6 +231,7 @@ public class PaperSessionPersistence {
         entity.setCodeContent(session.getUserInputs().getCodeContent());
         entity.setSqlParsedJson(toJson(session.getSqlParsed()));
         entity.setTocJson(toJson(session.getToc()));
+        entity.setUiScreenshotsJson(toJson(session.getUiScreenshots()));
         entity.setFormatTemplateId(session.getFormatTemplateId());
         entity.setFormatOverrideJson(session.getFormatOverrideJson());
         entity.setCustomFormatDocxPath(session.getCustomFormatDocxPath());

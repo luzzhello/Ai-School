@@ -381,13 +381,32 @@ vector-store:
     api-key:
     use-tls: false
 
---- # ER 图生成配置
+--- # 对话 / 视觉 / 画图配置
 chat:
   model:
-    # 默认对话模型（对应 chat_model 表中的 model_name）
-    default-model: deepseek-v4-flash
+    # 默认文本/画图模型（对应 chat_model.model_name）
+    default-model: kimi-k2.7-code
+  vision:
+    # 默认视觉识别模型（论文截图识别等；与 chat.model.default-model 分离）
+    default-model: Doubao-Seed-2.0-mini
 
 --- # 论文文献库检索
 paper:
   lit:
     recent-years: 5
+    # 库内检索：题目分词后每词查 N 条，合并去重后最多 M 条
+    search-per-keyword: 10
+    search-max-total: 50
+    ondemand:
+      enabled: true
+      min-keywords: 3
+      max-keywords: 5
+      max-per-keyword: 20
+      task-timeout-sec: 600
+      list-only: true
+      python-executable: python
+      crawler-work-dir: tools/cnki-crawler
+      config-path: config.yaml
+      db-ready-min-count: 50
+      auto-select-zh: 18
+      auto-select-en: 2
